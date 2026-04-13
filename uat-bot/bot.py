@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import discord
+from discord.errors import ConnectionClosed, LoginFailure
 from discord.ext import commands
 from dotenv import load_dotenv
 
@@ -21,6 +22,7 @@ INTENTS = discord.Intents(
 class UATBot(commands.Bot):
     def __init__(self) -> None:
         super().__init__(command_prefix="!", intents=INTENTS)
+        self.sync_guild_id = os.getenv("SYNC_GUILD_ID", "").strip()
 
     async def setup_hook(self) -> None:
         await init_db()
@@ -32,15 +34,49 @@ class UATBot(commands.Bot):
 
     async def on_ready(self) -> None:
         print(f"Logged in as {self.user} (id={self.user.id})")
-        synced = await self.tree.sync()
-        print(f"Synced {len(synced)} application command(s).")
+        try:
+            if self.sync_guild_id:
+                guild = discord.Object(id=int(self.sync_guild_id))
+                synced = await self.tree.sync(guild=guild)
+                print(
+                    f"Synced {len(synced)} application command(s) to guild "
+                    f"{self.sync_guild_id}."
+                )
+            else:
+                synced = await self.tree.sync()
+                print(f"Synced {len(synced)} global application command(s).")
+        except ValueError:
+            print(
+                "SYNC_GUILD_ID is not a valid integer. "
+                "Skipping guild-only sync and using global sync instead."
+            )
+            synced = await self.tree.sync()
+            print(f"Synced {len(synced)} global application command(s).")
 
 
 def main() -> None:
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
-        raise SystemExit("Set BOT_TOKEN in .env")
-    UATBot().run(token)
+        raise SystemExit(
+            "BOT_TOKEN is missing. Add it to uat-bot/.env and run again."
+        )
+
+    try:
+        UATBot().run(token)
+    except LoginFailure:
+        raise SystemExit(
+            "Discord rejected BOT_TOKEN. "
+            "Suggestion: reset bot token in Discord Developer Portal, "
+            "update uat-bot/.env, then restart bot.py."
+        )
+    except ConnectionClosed as exc:
+        if getattr(exc, "code", None) == 4004:
+            raise SystemExit(
+                "Discord closed the connection with code 4004 "
+                "(authentication failed). Suggestion: ensure BOT_TOKEN is "
+                "current after token reset and retry."
+            )
+        raise
 
 
 if __name__ == "__main__":
