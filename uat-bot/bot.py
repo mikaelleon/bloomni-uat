@@ -37,6 +37,9 @@ class UATBot(commands.Bot):
         try:
             if self.sync_guild_id:
                 guild = discord.Object(id=int(self.sync_guild_id))
+                # Copy all registered global commands into this guild for
+                # fast dev sync/iteration.
+                self.tree.copy_global_to(guild=guild)
                 synced = await self.tree.sync(guild=guild)
                 print(
                     f"Synced {len(synced)} application command(s) to guild "
@@ -63,6 +66,8 @@ def main() -> None:
 
     try:
         UATBot().run(token)
+    except KeyboardInterrupt:
+        raise SystemExit("Bot stopped by user.")
     except LoginFailure:
         raise SystemExit(
             "Discord rejected BOT_TOKEN. "

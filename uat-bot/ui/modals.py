@@ -138,10 +138,7 @@ class ExistingChannelsModal(discord.ui.Modal, title="Map existing channels"):
     mapping = discord.ui.TextInput(
         label="Channel IDs (7 lines: order in description)",
         style=discord.TextStyle.paragraph,
-        placeholder=(
-            "Line order:\n1 uat-announcements\n2 register-here\n3 bug-reports\n"
-            "4 suggestions\n5 payout-log\n6 bot-logs\n7 tester-guidelines"
-        ),
+        placeholder="7 lines: announcements, register, bugs, suggestions, payout, logs, guidelines",
         required=True,
         max_length=1000,
     )

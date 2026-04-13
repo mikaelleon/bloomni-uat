@@ -174,11 +174,11 @@ class Setup(commands.Cog):
         )
 
         names = [
-            ("uat-announcements", {}),
-            ("register-here", {}),
-            ("bug-reports", {}),
-            ("suggestions", {}),
-            ("payout-log", {}),
+            ("uat-announcements", None),
+            ("register-here", None),
+            ("bug-reports", None),
+            ("suggestions", None),
+            ("payout-log", None),
             ("bot-logs", over_bot_logs),
             ("tester-guidelines", over_guidelines),
         ]
@@ -193,7 +193,12 @@ class Setup(commands.Cog):
         ]
         mapping: dict[str, str] = {}
         for (name, ow), key in zip(names, keys):
-            ch = await guild.create_text_channel(name, category=cat, overwrites=ow or None)
+            if ow is None:
+                ch = await guild.create_text_channel(name, category=cat)
+            else:
+                ch = await guild.create_text_channel(
+                    name, category=cat, overwrites=ow
+                )
             mapping[key] = str(ch.id)
             await asyncio.sleep(0.3)
         sess["channels"] = mapping
