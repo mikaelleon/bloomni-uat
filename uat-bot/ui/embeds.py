@@ -10,17 +10,21 @@ def _embed(**kwargs) -> discord.Embed:
     return discord.Embed(color=EMBED_COLOR, **kwargs)
 
 
-def tos_embed() -> discord.Embed:
-    return _embed(
-        title="Tester Registration — Terms of Service",
-        description=(
+def tos_embed(tos_text: str | None = None) -> discord.Embed:
+    body = (
+        tos_text.strip()
+        if tos_text and tos_text.strip()
+        else (
             "By registering as a UAT tester, you agree that:\n"
             "• You will submit honest bug reports and suggestions.\n"
             "• You understand payouts are subject to owner approval and weekly caps.\n"
             "• Your GCash number is stored encrypted and only used for payouts.\n"
-            "• The owner may deactivate your access at any time for rule violations.\n\n"
-            "Click **I Accept** to continue or **I Decline** to cancel."
-        ),
+            "• The owner may deactivate your access at any time for rule violations."
+        )
+    )
+    return _embed(
+        title="Tester Registration — Terms of Service",
+        description=f"{body}\n\nClick **I Accept** to continue or **I Decline** to cancel.",
     )
 
 
@@ -252,3 +256,140 @@ def setup_summary_embed(payload: dict) -> discord.Embed:
         val = str(v) if not isinstance(v, list) else "\n".join(v)
         e.add_field(name=k, value=val[:1024] or "—", inline=False)
     return e
+
+
+def get_welcome_pages(
+    *,
+    display_name: str,
+    bot_name: str,
+    owner_display_name: str,
+    rates: dict,
+    cfg: dict,
+) -> list[discord.Embed]:
+    bug_val = int(rates.get("bug_report_rate", 0))
+    bug_res = int(rates.get("bug_resolve_bonus", 0))
+    sug_ack = int(rates.get("suggestion_submit_rate", 0))
+    sug_imp = int(rates.get("suggestion_implement_bonus", 0))
+    bug_daily = int(cfg.get("daily_bug_limit", 2) or 2)
+    sug_daily = int(cfg.get("daily_suggestion_limit", 1) or 1)
+    cap = int(cfg.get("weekly_cap", 30) or 30)
+    payout_day = cfg.get("payout_day", "Monday")
+    bot_desc = cfg.get("bot_description", "UAT tracking bot for reports, suggestions, and payouts.")
+
+    pages: list[discord.Embed] = []
+
+    p1 = discord.Embed(
+        color=0x5865F2,
+        title="🧪 Welcome to the UAT Tester Program!",
+        description=(
+            f"Hey **{display_name}**! Your application has been approved — you're now an official tester for **{bot_name}**.\n\n"
+            "This DM is your complete guide to the program. You can revisit this anytime.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "What is this program?\n\n"
+            f"**{bot_name}** is maintained by **{owner_display_name}**. As a tester, your job is simple: use the bot, break things, and report what can be fixed or improved.\n\n"
+            "This is a casual sideline — not a job. You set your own pace.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "What you'll be testing:\n\n"
+            f"{bot_desc}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━"
+        ),
+    )
+    p1.set_footer(text="Page 1 of 7 • Use the buttons below to navigate")
+    pages.append(p1)
+
+    p2 = discord.Embed(
+        color=0x5865F2,
+        title="📋 How It Works",
+        description=(
+            "There are two ways to earn as a tester:\n\n"
+            "🐛 **Finding Bugs**\n"
+            f"- Submit with `/bug`\n- Owner validates report\n- Validated = **₱{bug_val}**\n- If resolved = **+₱{bug_res} bonus**\n\n"
+            "⚠️ You earn on owner validation, not on submission.\n\n"
+            "💡 **Submitting Suggestions**\n"
+            f"- Submit with `/suggest`\n- Owner acknowledges it\n- Acknowledged = **₱{sug_ack}**\n- If implemented = **+₱{sug_imp} bonus**\n\n"
+            "⚠️ Suggestions are also paid only after owner acknowledgment."
+        ),
+    )
+    p2.set_footer(text="Page 2 of 7")
+    pages.append(p2)
+
+    p3 = discord.Embed(
+        color=0x57F287,
+        title="💰 Earning Rates & Pricing Matrix",
+        description=(
+            "Base Rates\n"
+            f"- Bug validated: **₱{bug_val}**\n"
+            f"- Bug resolved bonus: **₱{bug_res}**\n"
+            f"- Suggestion acknowledged: **₱{sug_ack}**\n"
+            f"- Suggestion implemented bonus: **₱{sug_imp}**\n\n"
+            f"Daily limits: **{bug_daily} bugs**, **{sug_daily} suggestion(s)**\n"
+            f"Weekly cap: **₱{cap}**\n\n"
+            f"Max per validated bug: **₱{bug_val + bug_res}**\n"
+            f"Max per implemented idea: **₱{sug_ack + sug_imp}**"
+        ),
+    )
+    p3.set_footer(text="Page 3 of 7 • Rates may increase as milestones are reached")
+    pages.append(p3)
+
+    p4 = discord.Embed(
+        color=0xFEE75C,
+        title="⏱️ Limits, Resets & Real Earnings Examples",
+        description=(
+            "Limits and resets:\n"
+            f"- Bugs/day: **{bug_daily}** (resets midnight PHT)\n"
+            f"- Suggestions/day: **{sug_daily}** (resets midnight PHT)\n"
+            f"- Weekly cap: **₱{cap}** (resets Monday midnight PHT)\n\n"
+            "Use `/myinfo` for live usage and countdown timers.\n\n"
+            "Validation timing matters: earnings are credited when owner action happens, not when you submit."
+        ),
+    )
+    p4.set_footer(text="Page 4 of 7")
+    pages.append(p4)
+
+    p5 = discord.Embed(
+        color=0xEB459E,
+        title="💸 How Payouts Work",
+        description=(
+            f"Payouts are sent every **{payout_day}** via GCash.\n\n"
+            "No minimum payout. If you earned it, it gets paid.\n\n"
+            "If payout seems missing:\n"
+            "1) Check `/myinfo` for masked GCash\n"
+            "2) Update with `/update-gcash` if needed\n"
+            "3) DM the owner privately"
+        ),
+    )
+    p5.set_footer(text="Page 5 of 7")
+    pages.append(p5)
+
+    p6 = discord.Embed(
+        color=0x5865F2,
+        title="🤖 Your Commands — Quick Reference",
+        description=(
+            "**Profile:** `/myinfo`, `/mybugs`, `/mysuggestions`, `/mypending`, `/streak`\n"
+            "**Submit:** `/bug`, `/suggest`\n"
+            "**Earnings:** `/earnings`, `/history`, `/rates`\n"
+            "**Community:** `/leaderboard`\n"
+            "**Account:** `/update-gcash`\n"
+            "**Browse:** `/bugs list`, `/bugs info`, `/suggestion list`, `/suggestion info`"
+        ),
+    )
+    p6.set_footer(text="Page 6 of 7 • All commands are slash commands")
+    pages.append(p6)
+
+    p7 = discord.Embed(
+        color=0xED4245,
+        title="📜 Rules & Reminders",
+        description=(
+            "1) Quality over quantity.\n"
+            "2) One submission per issue.\n"
+            "3) Include clear steps and evidence.\n"
+            "4) Use bug threads for screenshots/recordings.\n"
+            "5) Keep feedback civil and constructive.\n"
+            "6) Keep your GCash details updated.\n\n"
+            "Need help? DM the owner for payout/account concerns.\n\n"
+            "You're all set. Happy testing! 🧪"
+        ),
+    )
+    p7.set_footer(text="Page 7 of 7 • You can revisit this guide anytime in this DM")
+    pages.append(p7)
+    return pages

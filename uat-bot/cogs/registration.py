@@ -15,7 +15,7 @@ from ui.modals import (
     RegistrationIdentityModal,
     UpdateGCashModal,
 )
-from ui.views import PaginationView
+from ui.views import DMPagedGuideView, PaginationView
 from utils import config
 from utils.checks import is_active_tester, is_admin, is_owner
 from utils.crypto import encrypt_gcash, mask_gcash
@@ -331,7 +331,12 @@ class Registration(commands.Cog):
                 )
                 return
         view = TOSView(self, invite_code.strip() if invite_code else None)
-        await interaction.response.send_message(embed=embeds.tos_embed(), view=view, ephemeral=True)
+        tos_text = await db.get_config("tos_text")
+        await interaction.response.send_message(
+            embed=embeds.tos_embed(tos_text),
+            view=view,
+            ephemeral=True,
+        )
 
     async def start_context_modal(self, interaction: discord.Interaction, identity_payload: dict) -> None:
         if not GCASH_RE.match(identity_payload["gcash_number"]):
@@ -461,23 +466,19 @@ class Registration(commands.Cog):
             "suggestion_submit_rate": cfg.get("suggestion_submit_rate", "0"),
             "suggestion_implement_bonus": cfg.get("suggestion_implement_bonus", "0"),
         }
-        bug_ch = await config.get_channel(self.bot, "channel_bug_reports")
-        sug_ch = await config.get_channel(self.bot, "channel_suggestions")
-        guide_ch = await config.get_channel(self.bot, "channel_guidelines")
-        channels = {
-            "bug_reports": bug_ch.mention if bug_ch else "#bug-reports",
-            "suggestions": sug_ch.mention if sug_ch else "#suggestions",
-            "guidelines": guide_ch.mention if guide_ch else "#tester-guidelines",
-        }
         try:
-            await user.send(
-                embed=embeds.registration_success_embed(
-                    str(application["display_name"]),
-                    mask_gcash(str(application["gcash_number"])),
-                    rates,
-                    channels,
-                )
+            owner_name = interaction.user.display_name if isinstance(interaction.user, discord.Member) else str(interaction.user)
+            bot_name = self.bot.user.display_name if self.bot.user else "UAT Bot"
+            pages = embeds.get_welcome_pages(
+                display_name=str(application["display_name"]),
+                bot_name=bot_name,
+                owner_display_name=owner_name,
+                rates=rates,
+                cfg=cfg,
             )
+            dm_view = DMPagedGuideView(author_id=user.id, pages=pages)
+            dm_msg = await user.send(embed=pages[0], view=dm_view)
+            dm_view.message = dm_msg
         except discord.HTTPException:
             pass
         if interaction.message and interaction.message.embeds:
@@ -598,6 +599,27 @@ class Registration(commands.Cog):
         await db.set_config("channel_applications", str(channel.id))
         await interaction.response.send_message(
             embed=embeds.success_embed(f"Applications channel set to {channel.mention}."),
+            ephemeral=True,
+        )
+
+    @config_group.command(name="set", description="Set owner-configurable registration text")
+    @app_commands.describe(key="Config key", value="New text value")
+    @app_commands.choices(
+        key=[
+            app_commands.Choice(name="bot_description", value="bot_description"),
+            app_commands.Choice(name="tos_text", value="tos_text"),
+        ]
+    )
+    async def config_set(self, interaction: discord.Interaction, key: str, value: str) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Only the bot owner can use this."),
+                ephemeral=True,
+            )
+            return
+        await db.set_config(key, value.strip())
+        await interaction.response.send_message(
+            embed=embeds.success_embed(f"Updated `{key}`."),
             ephemeral=True,
         )
 

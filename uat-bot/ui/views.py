@@ -62,3 +62,46 @@ class PaginationView(discord.ui.View):
                 await self.message.edit(view=self)
             except discord.HTTPException:
                 pass
+
+
+class DMPagedGuideView(discord.ui.View):
+    def __init__(self, *, author_id: int, pages: list[discord.Embed]):
+        super().__init__(timeout=None)
+        self.author_id = author_id
+        self.pages = pages
+        self.index = 0
+        self.message: discord.Message | None = None
+
+        self.prev_btn = discord.ui.Button(label="◀️ Prev", style=discord.ButtonStyle.secondary)
+        self.page_btn = discord.ui.Button(
+            label=f"Page 1 of {len(self.pages)}", style=discord.ButtonStyle.secondary, disabled=True
+        )
+        self.next_btn = discord.ui.Button(label="Next ▶️", style=discord.ButtonStyle.secondary)
+        self.prev_btn.callback = self._prev
+        self.next_btn.callback = self._next
+
+        self.add_item(self.prev_btn)
+        self.add_item(self.page_btn)
+        self.add_item(self.next_btn)
+        self._update_buttons()
+
+    def _update_buttons(self) -> None:
+        self.prev_btn.disabled = self.index <= 0
+        self.next_btn.disabled = self.index >= len(self.pages) - 1
+        self.page_btn.label = f"Page {self.index + 1} of {len(self.pages)}"
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user and interaction.user.id == self.author_id:
+            return True
+        await interaction.response.send_message("This guide belongs to another tester.", ephemeral=True)
+        return False
+
+    async def _prev(self, interaction: discord.Interaction) -> None:
+        self.index = max(0, self.index - 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.pages[self.index], view=self)
+
+    async def _next(self, interaction: discord.Interaction) -> None:
+        self.index = min(len(self.pages) - 1, self.index + 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.pages[self.index], view=self)

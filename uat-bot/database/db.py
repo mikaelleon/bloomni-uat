@@ -35,6 +35,8 @@ DEFAULT_CONFIG = {
     "setup_complete": "false",
     "invite_code_required": "false",
     "invite_code_value": "",
+    "bot_description": "This bot helps manage UAT registrations, bug reports, suggestions, and weekly tester payouts.",
+    "tos_text": "By registering as a UAT tester, you agree to submit honest reports, follow owner review decisions, and keep your payout info accurate.",
 }
 
 
