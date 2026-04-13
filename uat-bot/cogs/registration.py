@@ -244,9 +244,9 @@ class Registration(commands.Cog):
                 uname = str(u)
             except discord.HTTPException:
                 uname = "unknown"
-            act = "âœ…" if int(t.get("is_active", 0)) else "âŒ"
+            act = "✅" if int(t.get("is_active", 0)) else "❌"
             lines.append(
-                f"**{t.get('display_name', '?')}** â€” {uname} â€” {act} â€” weeks: {t.get('weeks_active', 0)}"
+                f"**{t.get('display_name', '?')}** — {uname} — {act} — weeks: {t.get('weeks_active', 0)}"
             )
         chunk = 5
         pages: list[discord.Embed] = []

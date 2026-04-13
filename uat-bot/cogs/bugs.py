@@ -88,19 +88,19 @@ class SeverityBugView(discord.ui.View):
             placeholder="Select severity level",
             options=[
                 discord.SelectOption(
-                    label="High â€” Core functionality broken",
+                    label="High — Core functionality broken",
                     value="high",
-                    emoji="ðŸ”´",
+                    emoji="🔴",
                 ),
                 discord.SelectOption(
-                    label="Medium â€” Feature partially broken",
+                    label="Medium — Feature partially broken",
                     value="medium",
-                    emoji="ðŸŸ¡",
+                    emoji="🟡",
                 ),
                 discord.SelectOption(
-                    label="Low â€” Minor issue or cosmetic",
+                    label="Low — Minor issue or cosmetic",
                     value="low",
-                    emoji="ðŸŸ¢",
+                    emoji="🟢",
                 ),
             ],
         )
@@ -113,7 +113,7 @@ class SeverityBugView(discord.ui.View):
 
 
 class Bugs(commands.Cog):
-    bugs = app_commands.Group(name="bugs", description="Bug tracking (resolve, list, â€¦)")
+    bugs = app_commands.Group(name="bugs", description="Bug tracking (resolve, list, ...)")
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -148,7 +148,7 @@ class Bugs(commands.Cog):
         if not await check_weekly_cap(uid, ws, next_add=rate):
             await interaction.response.send_message(
                 embed=embeds.error_embed(
-                    "You've reached the weekly earnings cap (â‚±250). See you next week!"
+                    "You've reached the weekly earnings cap (₱250). See you next week!"
                 ),
                 ephemeral=True,
             )
@@ -181,7 +181,7 @@ class Bugs(commands.Cog):
         if dups:
             emb = discord.Embed(
                 title="Possible duplicate(s)",
-                description="Similar open bug titles:\n" + "\n".join(f"â€¢ {d}" for d in dups[:10]),
+                description="Similar open bug titles:\n" + "\n".join(f"• {d}" for d in dups[:10]),
                 color=embeds.EMBED_COLOR,
             )
             view = DuplicateConfirmView(self, payload, interaction.user.id)
@@ -226,11 +226,11 @@ class Bugs(commands.Cog):
         assert bug_row
         msg = await ch.send(embed=embeds.bug_report_embed(bug_row, reporter))
         await db.update_bug_message_id(bug_id, str(msg.id))
-        thread_name = f"{bug_id} â€” {payload['title']}"[:100]
+        thread_name = f"{bug_id} — {payload['title']}"[:100]
         thread = await msg.create_thread(name=thread_name)
         await db.update_bug_thread(bug_id, str(thread.id))
         await thread.send(
-            "ðŸ“Ž **Attach your evidence here.**\n"
+            "📎 **Attach your evidence here.**\n"
             "Screenshots, screen recordings, or any other files that help reproduce this bug. "
             "This thread is also where any discussion about this bug happens."
         )
@@ -244,7 +244,7 @@ class Bugs(commands.Cog):
                 f"**Title:** {payload['title']}\n"
                 f"**Severity:** {payload['severity']}\n"
                 f"**Thread:** {jump}\n"
-                f"+â‚±{rate} added to your weekly earnings."
+                f"+₱{rate} added to your weekly earnings."
             ),
             color=embeds.EMBED_COLOR,
         )
@@ -321,12 +321,12 @@ class Bugs(commands.Cog):
             payout_ch = await config.get_channel(self.bot, "channel_payout_log")
             if payout_ch:
                 await payout_ch.send(
-                    f"âœ… {bug['bug_id']} resolved! +â‚±{bonus} bonus credited to {name}. "
-                    f"Weekly total: â‚±{total} / â‚±{cap}"
+                    f"✅ {bug['bug_id']} resolved! +₱{bonus} bonus credited to {name}. "
+                    f"Weekly total: ₱{total} / ₱{cap}"
                 )
             try:
                 await reporter.send(
-                    f"Your bug {bug['bug_id']} has been marked as resolved! +â‚±{bonus} bonus added to your earnings. ðŸŽ‰"
+                    f"Your bug {bug['bug_id']} has been marked as resolved! +₱{bonus} bonus added to your earnings. 🎉"
                 )
             except discord.HTTPException:
                 pass
@@ -352,7 +352,7 @@ class Bugs(commands.Cog):
         await interaction.response.send_message(
             embed=embeds.confirmation_embed(
                 "Confirm resolve",
-                f"Mark {bug['bug_id']} as resolved? This will credit +â‚±{bonus} to {reporter.display_name}.",
+                f"Mark {bug['bug_id']} as resolved? This will credit +₱{bonus} to {reporter.display_name}.",
             ),
             view=view,
             ephemeral=True,
@@ -388,7 +388,7 @@ class Bugs(commands.Cog):
             t = await db.get_tester(b["reporter_id"])
             dn = t.get("display_name", "?") if t else "?"
             lines.append(
-                f"**{b['bug_id']}** â€” {b['title'][:80]} â€” {b['severity']} â€” {dn} â€” {b['submitted_at']}"
+                f"**{b['bug_id']}** — {b['title'][:80]} — {b['severity']} — {dn} — {b['submitted_at']}"
             )
         chunk = 5
         pages: list[discord.Embed] = []

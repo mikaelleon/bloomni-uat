@@ -62,7 +62,7 @@ class FeatureSelectView(discord.ui.View):
 
 
 class Suggestions(commands.Cog):
-    suggestion = app_commands.Group(name="suggestion", description="Suggestions (implement, dismiss, â€¦)")
+    suggestion = app_commands.Group(name="suggestion", description="Suggestions (implement, dismiss, ...)")
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -140,7 +140,7 @@ class Suggestions(commands.Cog):
             description=(
                 f"**Title:** {title}\n"
                 f"**Feature:** {feature_tag}\n"
-                f"+â‚±{rate} added to earnings."
+                f"+₱{rate} added to earnings."
             ),
             color=embeds.EMBED_COLOR,
         )
@@ -212,12 +212,12 @@ class Suggestions(commands.Cog):
             payout_ch = await config.get_channel(self.bot, "channel_payout_log")
             if payout_ch:
                 await payout_ch.send(
-                    f"âœ… {sug['suggestion_id']} implemented! +â‚±{bonus} credited to {name}. "
-                    f"Weekly total: â‚±{total} / â‚±{cap}"
+                    f"✅ {sug['suggestion_id']} implemented! +₱{bonus} credited to {name}. "
+                    f"Weekly total: ₱{total} / ₱{cap}"
                 )
             try:
                 await submitter.send(
-                    f"Congratulations! Your suggestion {sug['suggestion_id']} was implemented. +â‚±{bonus} bonus."
+                    f"Congratulations! Your suggestion {sug['suggestion_id']} was implemented. +₱{bonus} bonus."
                 )
             except discord.HTTPException:
                 pass
@@ -243,7 +243,7 @@ class Suggestions(commands.Cog):
         await interaction.response.send_message(
             embed=embeds.confirmation_embed(
                 "Confirm implement",
-                f"Mark {sug['suggestion_id']} as implemented? This will credit +â‚±{bonus} to {submitter.display_name}.",
+                f"Mark {sug['suggestion_id']} as implemented? This will credit +₱{bonus} to {submitter.display_name}.",
             ),
             view=view,
             ephemeral=True,
@@ -293,7 +293,7 @@ class Suggestions(commands.Cog):
             r = reason.strip() if reason else "No reason provided"
             await u.send(
                 f"Your suggestion {suggestion_id} has been dismissed. Reason: {r}. "
-                f"The â‚±{rate} submission pay is yours to keep!"
+                f"The ₱{rate} submission pay is yours to keep!"
             )
         except discord.HTTPException:
             pass
@@ -334,7 +334,7 @@ class Suggestions(commands.Cog):
             t = await db.get_tester(s["submitter_id"])
             dn = t.get("display_name", "?") if t else "?"
             lines.append(
-                f"**{s['suggestion_id']}** â€” {s['title'][:60]} â€” {s['feature_tag']} â€” {dn} â€” {s['submitted_at']}"
+                f"**{s['suggestion_id']}** — {s['title'][:60]} — {s['feature_tag']} — {dn} — {s['submitted_at']}"
             )
         chunk = 5
         pages: list[discord.Embed] = []
