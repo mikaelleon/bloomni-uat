@@ -263,12 +263,91 @@ class Registration(commands.Cog):
         self.bot = bot
         self._identity_cache: dict[str, dict] = {}
         self._invite_code_cache: dict[str, str] = {}
+        self._rate_keys = {
+            "bug_report_rate",
+            "bug_resolve_bonus",
+            "suggestion_submit_rate",
+            "suggestion_implement_bonus",
+            "weekly_cap",
+            "daily_bug_limit",
+            "daily_suggestion_limit",
+        }
+
+    async def _send_welcome_guide_dm(
+        self,
+        user: discord.User,
+        display_name: str,
+        cfg: dict,
+        rates: dict,
+        owner_display_name: str,
+    ) -> bool:
+        bot_name = self.bot.user.display_name if self.bot.user else "UAT Bot"
+        pages = embeds.get_welcome_pages(
+            display_name=display_name,
+            bot_name=bot_name,
+            owner_display_name=owner_display_name,
+            rates=rates,
+            cfg=cfg,
+        )
+        dm_view = DMPagedGuideView(author_id=user.id, pages=pages)
+        msg = await user.send(embed=pages[0], view=dm_view)
+        dm_view.message = msg
+        return True
+
+    async def _broadcast_rate_update(self, changed_by: discord.abc.User, before: dict, after: dict) -> dict:
+        changed_lines: list[str] = []
+        for k in sorted(self._rate_keys):
+            old = str(before.get(k, ""))
+            new = str(after.get(k, ""))
+            if old != new:
+                changed_lines.append(f"- `{k}`: **{old or '—'}** -> **{new or '—'}**")
+
+        announce_ch = await config.get_channel(self.bot, "channel_announcements")
+        if announce_ch and changed_lines:
+            ann = discord.Embed(
+                title="Rates & limits updated",
+                description=(
+                    f"Updated by **{changed_by.display_name}**\n\n"
+                    + "\n".join(changed_lines)
+                    + "\n\nUpdated guide has been sent to active testers."
+                ),
+                color=embeds.EMBED_COLOR,
+            )
+            await announce_ch.send(embed=ann)
+
+        testers = await db.get_all_testers(active_only=True)
+        rates = {
+            "bug_report_rate": after.get("bug_report_rate", "0"),
+            "bug_resolve_bonus": after.get("bug_resolve_bonus", "0"),
+            "suggestion_submit_rate": after.get("suggestion_submit_rate", "0"),
+            "suggestion_implement_bonus": after.get("suggestion_implement_bonus", "0"),
+        }
+        success = 0
+        failed = 0
+        for t in testers:
+            uid = t.get("user_id")
+            if not uid:
+                continue
+            try:
+                u = await self.bot.fetch_user(int(uid))
+                await self._send_welcome_guide_dm(
+                    u,
+                    str(t.get("display_name") or u.display_name),
+                    after,
+                    rates,
+                    changed_by.display_name,
+                )
+                success += 1
+            except (discord.HTTPException, ValueError):
+                failed += 1
+        return {"sent": success, "failed": failed, "changes": len(changed_lines)}
 
     @app_commands.command(name="register", description="Register as a UAT tester")
     @app_commands.describe(invite_code="Optional invite code (required only if owner enables it)")
     async def register(self, interaction: discord.Interaction, invite_code: str | None = None) -> None:
+        await interaction.response.defer(ephemeral=True)
         if await db.get_config("setup_complete") != "true":
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embeds.error_embed(
                     "The bot hasn't been set up yet. Ask the owner to run /setup first."
                 ),
@@ -277,7 +356,7 @@ class Registration(commands.Cog):
             return
         reg_ch = await db.get_config("channel_register_here")
         if not reg_ch or str(interaction.channel_id) != reg_ch:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embeds.error_embed("Please head to #register-here to register."),
                 ephemeral=True,
             )
@@ -285,7 +364,7 @@ class Registration(commands.Cog):
         uid = str(interaction.user.id)
         existing = await db.get_tester(uid)
         if existing and int(existing.get("is_active", 0)):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embeds.error_embed(
                     "You're already registered. Use /update-gcash to change your GCash number."
                 ),
@@ -293,7 +372,7 @@ class Registration(commands.Cog):
             )
             return
         if existing and not int(existing.get("is_active", 0)):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embeds.warning_embed(
                     "Your tester account is currently deactivated.",
                     "Ask the owner to run /tester unregister if you should re-register from scratch, or /tester reactivate if you should continue your previous account.",
@@ -303,7 +382,7 @@ class Registration(commands.Cog):
             return
         latest = await db.get_latest_application(uid)
         if latest and latest.get("status") == "pending":
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embeds.error_embed("You already have a pending application. Please wait for owner review."),
                 ephemeral=True,
             )
@@ -313,7 +392,7 @@ class Registration(commands.Cog):
             if reviewed_at:
                 reapply_at = datetime.fromisoformat(reviewed_at) + timedelta(days=7)
                 if now_pht() < reapply_at:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         embed=embeds.warning_embed(
                             "Your application was not approved.",
                             f"You may reapply after {reapply_at.strftime('%d %b %Y, %I:%M %p PHT')}.",
@@ -325,14 +404,14 @@ class Registration(commands.Cog):
         invite_value = (await db.get_config("invite_code_value")).strip()
         if invite_required and invite_value:
             if not invite_code or invite_code.strip() != invite_value:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=embeds.error_embed("Invalid or missing invite code."),
                     ephemeral=True,
                 )
                 return
         view = TOSView(self, invite_code.strip() if invite_code else None)
         tos_text = await db.get_config("tos_text")
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=embeds.tos_embed(tos_text),
             view=view,
             ephemeral=True,
@@ -470,17 +549,13 @@ class Registration(commands.Cog):
         }
         try:
             owner_name = interaction.user.display_name if isinstance(interaction.user, discord.Member) else str(interaction.user)
-            bot_name = self.bot.user.display_name if self.bot.user else "UAT Bot"
-            pages = embeds.get_welcome_pages(
-                display_name=str(application["display_name"]),
-                bot_name=bot_name,
-                owner_display_name=owner_name,
-                rates=rates,
-                cfg=cfg,
+            await self._send_welcome_guide_dm(
+                user,
+                str(application["display_name"]),
+                cfg,
+                rates,
+                owner_name,
             )
-            dm_view = DMPagedGuideView(author_id=user.id, pages=pages)
-            dm_msg = await user.send(embed=pages[0], view=dm_view)
-            dm_view.message = dm_msg
         except discord.HTTPException:
             pass
         if interaction.message and interaction.message.embeds:
@@ -616,6 +691,13 @@ class Registration(commands.Cog):
         key=[
             app_commands.Choice(name="bot_description", value="bot_description"),
             app_commands.Choice(name="tos_text", value="tos_text"),
+            app_commands.Choice(name="bug_report_rate", value="bug_report_rate"),
+            app_commands.Choice(name="bug_resolve_bonus", value="bug_resolve_bonus"),
+            app_commands.Choice(name="suggestion_submit_rate", value="suggestion_submit_rate"),
+            app_commands.Choice(name="suggestion_implement_bonus", value="suggestion_implement_bonus"),
+            app_commands.Choice(name="weekly_cap", value="weekly_cap"),
+            app_commands.Choice(name="daily_bug_limit", value="daily_bug_limit"),
+            app_commands.Choice(name="daily_suggestion_limit", value="daily_suggestion_limit"),
         ]
     )
     async def config_set(self, interaction: discord.Interaction, key: str, value: str) -> None:
@@ -625,7 +707,29 @@ class Registration(commands.Cog):
                 ephemeral=True,
             )
             return
-        await db.set_config(key, value.strip())
+        new_value = value.strip()
+        if key in self._rate_keys:
+            try:
+                int(new_value)
+            except ValueError:
+                await interaction.response.send_message(
+                    embed=embeds.error_embed("Rate/limit values must be whole numbers."),
+                    ephemeral=True,
+                )
+                return
+        before = await db.get_all_config()
+        await db.set_config(key, new_value)
+        after = await db.get_all_config()
+        if key in self._rate_keys and str(before.get(key, "")) != str(after.get(key, "")):
+            await interaction.response.defer(ephemeral=True)
+            res = await self._broadcast_rate_update(interaction.user, before, after)
+            await interaction.followup.send(
+                embed=embeds.success_embed(
+                    f"Updated `{key}`. Notified testers: {res['sent']} sent, {res['failed']} failed."
+                ),
+                ephemeral=True,
+            )
+            return
         await interaction.response.send_message(
             embed=embeds.success_embed(f"Updated `{key}`."),
             ephemeral=True,

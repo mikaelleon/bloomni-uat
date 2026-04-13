@@ -110,12 +110,26 @@ class Setup(commands.Cog):
                 await i.response.send_message("Not for you.", ephemeral=True)
                 return
             await i.response.defer(ephemeral=True)
-            await db.reset_db()
-            setup_sessions.pop(interaction.user.id, None)
-            await i.followup.send(
-                embed=embeds.success_embed("Database reset. Run /setup again."),
-                ephemeral=True,
-            )
+            try:
+                await db.reset_db()
+                setup_sessions.pop(interaction.user.id, None)
+                await i.followup.send(
+                    embed=embeds.success_embed("Database reset. Run /setup again."),
+                    ephemeral=True,
+                )
+            except Exception as exc:
+                await _safe_send_log(
+                    self.bot,
+                    "SETUP_RESET_ERROR",
+                    {"by": str(interaction.user.id), "error": repr(exc)},
+                )
+                await i.followup.send(
+                    embed=embeds.warning_embed(
+                        "Could not reset database right now.",
+                        "Please try again in a few seconds. If this persists, restart the bot and retry /setup_reset.",
+                    ),
+                    ephemeral=True,
+                )
 
         async def cancel(i: discord.Interaction) -> None:
             if i.user.id != interaction.user.id:

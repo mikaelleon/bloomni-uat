@@ -93,7 +93,29 @@ async def reset_db() -> None:
         await _conn.close()
         _conn = None
     if DB_PATH.exists():
-        os.remove(DB_PATH)
+        try:
+            os.remove(DB_PATH)
+        except PermissionError:
+            # Windows can keep file handles briefly locked. Fallback to in-place reset.
+            conn = await aiosqlite.connect(DB_PATH)
+            try:
+                await conn.executescript(
+                    """
+                    PRAGMA foreign_keys = OFF;
+                    DROP TABLE IF EXISTS daily_counts;
+                    DROP TABLE IF EXISTS milestones;
+                    DROP TABLE IF EXISTS earnings;
+                    DROP TABLE IF EXISTS suggestions;
+                    DROP TABLE IF EXISTS bugs;
+                    DROP TABLE IF EXISTS applications;
+                    DROP TABLE IF EXISTS testers;
+                    DROP TABLE IF EXISTS config;
+                    PRAGMA foreign_keys = ON;
+                    """
+                )
+                await conn.commit()
+            finally:
+                await conn.close()
     await init_db()
 
 
