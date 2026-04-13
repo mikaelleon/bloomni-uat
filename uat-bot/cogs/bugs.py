@@ -1,5 +1,7 @@
 ﻿from __future__ import annotations
 
+from datetime import datetime
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -22,6 +24,16 @@ def _jaccard(a: str, b: str) -> float:
     if not sa or not sb:
         return 0.0
     return len(sa & sb) / len(sa | sb)
+
+
+def _simple_dt(value: str | None) -> str:
+    if not value:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(str(value))
+        return dt.strftime("%d %b %Y %I:%M %p")
+    except (TypeError, ValueError):
+        return str(value)[:19]
 
 
 class BugReportModalImpl(BugReportModal):
@@ -117,6 +129,27 @@ class Bugs(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    async def _earning_dm_embed(self, user_id: str, title: str, detail: str) -> discord.Embed:
+        ws = get_week_start(today_pht())
+        weekly = await db.get_or_create_earnings(user_id, ws)
+        total = int(weekly.get("total_earned") or 0)
+        cap = await config.get_rate("weekly_cap")
+        dc = await db.get_daily_counts(user_id, today_pht())
+        bug_limit = await config.get_rate("daily_bug_limit")
+        sug_limit = await config.get_rate("daily_suggestion_limit")
+        e = discord.Embed(title=title, description=detail, color=embeds.EMBED_COLOR)
+        e.add_field(
+            name="Current stats",
+            value=(
+                f"Weekly balance: ₱{total} / ₱{cap}\n"
+                f"Weekly cap remaining: ₱{max(0, cap - total)}\n"
+                f"Daily bug slots left: {max(0, bug_limit - int(dc.get('bugs_today', 0)))}\n"
+                f"Daily suggestion slots left: {max(0, sug_limit - int(dc.get('suggestions_today', 0)))}"
+            ),
+            inline=False,
+        )
+        return e
 
     @app_commands.command(name="bug", description="Submit a bug report")
     async def bug(self, interaction: discord.Interaction) -> None:
@@ -306,9 +339,12 @@ class Bugs(commands.Cog):
                     f"Weekly total: ₱{total} / ₱{cap}"
                 )
             try:
-                await reporter.send(
-                    f"Your bug {bug['bug_id']} has been marked as resolved! +₱{bonus} bonus added to your earnings. 🎉"
+                dm = await self._earning_dm_embed(
+                    rid,
+                    f"Bug {bug['bug_id']} resolved",
+                    f"Your bug has been marked as resolved. **+₱{bonus}** bonus added to your earnings.",
                 )
+                await reporter.send(embed=dm)
             except discord.HTTPException:
                 pass
             await log_event(
@@ -342,15 +378,16 @@ class Bugs(commands.Cog):
     @bugs.command(name="validate", description="Validate a submitted bug and credit reporter")
     @app_commands.describe(bug_id="Bug ID e.g. BUG-001")
     async def bug_validate(self, interaction: discord.Interaction, bug_id: str) -> None:
+        await interaction.response.defer(ephemeral=True)
         if not await is_owner(interaction):
-            await interaction.response.send_message(embed=embeds.error_embed("Only the bot owner can use this."), ephemeral=True)
+            await interaction.followup.send(embed=embeds.error_embed("Only the bot owner can use this."), ephemeral=True)
             return
         bug = await db.get_bug(bug_id)
         if not bug:
-            await interaction.response.send_message(embed=embeds.error_embed("Bug ID not found."), ephemeral=True)
+            await interaction.followup.send(embed=embeds.error_embed("Bug ID not found."), ephemeral=True)
             return
         if bug.get("status") != "submitted":
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embeds.error_embed("Only submitted bugs can be validated."),
                 ephemeral=True,
             )
@@ -359,7 +396,7 @@ class Bugs(commands.Cog):
         ws = get_week_start(today_pht())
         rate = await config.get_rate("bug_report_rate")
         if not await check_weekly_cap(reporter_id, ws, next_add=rate):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embeds.error_embed("Cannot validate: reporter already hit weekly cap."),
                 ephemeral=True,
             )
@@ -378,10 +415,15 @@ class Bugs(commands.Cog):
                 pass
         try:
             reporter = await self.bot.fetch_user(int(reporter_id))
-            await reporter.send(f"Your bug {bug['bug_id']} has been validated! ₱{rate} added to your earnings.")
+            dm = await self._earning_dm_embed(
+                reporter_id,
+                f"Bug {bug['bug_id']} validated",
+                f"Your bug has been validated. **+₱{rate}** added to your earnings.",
+            )
+            await reporter.send(embed=dm)
         except discord.HTTPException:
             pass
-        await interaction.response.send_message(embed=embeds.success_embed(f"{bug['bug_id']} validated and credited."), ephemeral=True)
+        await interaction.followup.send(embed=embeds.success_embed(f"{bug['bug_id']} validated and credited."), ephemeral=True)
 
     @bugs.command(name="reject", description="Reject an invalid bug")
     @app_commands.describe(bug_id="Bug ID e.g. BUG-001", reason="Reason for rejection")
@@ -421,6 +463,7 @@ class Bugs(commands.Cog):
     @app_commands.describe(status="Filter by status")
     @app_commands.choices(
         status=[
+            app_commands.Choice(name="open", value="open"),
             app_commands.Choice(name="submitted", value="submitted"),
             app_commands.Choice(name="validated", value="validated"),
             app_commands.Choice(name="rejected", value="rejected"),
@@ -440,7 +483,11 @@ class Bugs(commands.Cog):
                 ephemeral=True,
             )
             return
-        bugs = await db.get_bugs_by_status(status)
+        if status == "open":
+            all_rows = await db.get_bugs_by_status("all")
+            bugs = [b for b in all_rows if b.get("status") in {"submitted", "validated"}]
+        else:
+            bugs = await db.get_bugs_by_status(status)
         if not bugs:
             await interaction.response.send_message(embed=embeds.error_embed("No bugs found."), ephemeral=True)
             return
@@ -449,7 +496,7 @@ class Bugs(commands.Cog):
             t = await db.get_tester(b["reporter_id"])
             dn = t.get("display_name", "?") if t else "?"
             lines.append(
-                f"**{b['bug_id']}** — {b['title'][:80]} — {b['severity']} — {dn} — {b['submitted_at']}"
+                f"**{b['bug_id']}** — {b['title'][:80]} — {b['severity']} — {dn} — {_simple_dt(b.get('submitted_at'))}"
             )
         chunk = 5
         pages: list[discord.Embed] = []

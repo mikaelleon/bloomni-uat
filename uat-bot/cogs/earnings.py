@@ -115,10 +115,15 @@ class Earnings(commands.Cog):
         weekly = await db.get_or_create_earnings(uid, ws)
         all_time = await db.get_tester_all_time_stats(uid)
         pending_bugs = len(await db.get_user_bugs(uid, "submitted"))
+        pending_suggestions = len(await db.get_user_suggestions(uid, "submitted"))
         senior = "✅ Yes" if int(tester.get("weeks_active") or 0) >= 4 else "❌ No"
         daily_reset = self._next_daily_reset_unix()
         weekly_reset = self._next_weekly_reset_unix()
         r_bug = await config.get_rate("bug_report_rate")
+        r_sug = await config.get_rate("suggestion_submit_rate")
+        daily_bug_limit = await config.get_rate("daily_bug_limit")
+        daily_suggestion_limit = await config.get_rate("daily_suggestion_limit")
+        weekly_cap = await config.get_rate("weekly_cap")
         e = discord.Embed(
             title=f"🧪 Tester Profile — {tester.get('display_name', interaction.user.display_name)}",
             color=embeds.EMBED_COLOR,
@@ -133,8 +138,8 @@ class Earnings(commands.Cog):
         e.add_field(
             name="Today's Usage",
             value=(
-                f"Bugs submitted: {dc.get('bugs_today', 0)} / 3\n"
-                f"Suggestions submitted: {dc.get('suggestions_today', 0)} / 2\n\n"
+                f"Bugs submitted: {dc.get('bugs_today', 0)} / {daily_bug_limit}\n"
+                f"Suggestions submitted: {dc.get('suggestions_today', 0)} / {daily_suggestion_limit}\n\n"
                 f"⏰ Daily reset: <t:{daily_reset}:R>"
             ),
             inline=False,
@@ -142,11 +147,11 @@ class Earnings(commands.Cog):
         e.add_field(
             name="This Week",
             value=(
-                f"Earnings so far: ₱{weekly.get('total_earned', 0)} / ₱250\n"
-                f"Bugs submitted: {weekly.get('bugs_submitted', 0)} (₱{pending_bugs * r_bug} pending validation)\n"
+                f"Earnings so far: ₱{weekly.get('total_earned', 0)} / ₱{weekly_cap}\n"
+                f"Bugs submitted: {pending_bugs} (₱{pending_bugs * r_bug} pending validation)\n"
                 f"Bugs validated: {weekly.get('bugs_validated', 0)}\n"
                 f"Bugs resolved: {weekly.get('bugs_resolved', 0)}\n"
-                f"Suggestions submitted: {weekly.get('suggestions_submitted', 0)}\n"
+                f"Suggestions submitted: {pending_suggestions} (₱{pending_suggestions * r_sug} pending acknowledgement)\n"
                 f"Suggestions acknowledged: {weekly.get('suggestions_acknowledged', 0)}\n\n"
                 f"⏰ Weekly reset & payout: <t:{weekly_reset}:R>"
             ),

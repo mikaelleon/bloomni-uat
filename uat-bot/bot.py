@@ -3,12 +3,14 @@ from __future__ import annotations
 import os
 import traceback
 from pathlib import Path
+import logging
 
 import discord
 from discord.errors import ConnectionClosed, LoginFailure
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
+from aiohttp.client_exceptions import ClientConnectorDNSError
 
 from database.db import init_db
 
@@ -58,6 +60,9 @@ class UATBot(commands.Bot):
             synced = await self.tree.sync()
             print(f"Synced {len(synced)} global application command(s).")
 
+    async def on_resumed(self) -> None:
+        print("Gateway session resumed after temporary network interruption.")
+
     async def on_error(self, event_method: str, *args, **kwargs) -> None:
         print(f"[EVENT_ERROR] event={event_method}")
         print(traceback.format_exc())
@@ -84,6 +89,20 @@ class UATBot(commands.Bot):
             pass
 
 
+class _DiscordDNSNoiseFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Suppress known transient DNS reconnect tracebacks; Discord retries automatically.
+        if record.exc_info and record.exc_info[1]:
+            exc = record.exc_info[1]
+            if isinstance(exc, ClientConnectorDNSError):
+                return False
+        return True
+
+
+def _configure_runtime_logging() -> None:
+    logging.getLogger("discord.client").addFilter(_DiscordDNSNoiseFilter())
+
+
 def main() -> None:
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
@@ -92,6 +111,7 @@ def main() -> None:
         )
 
     try:
+        _configure_runtime_logging()
         UATBot().run(token)
     except KeyboardInterrupt:
         raise SystemExit("Bot stopped by user.")

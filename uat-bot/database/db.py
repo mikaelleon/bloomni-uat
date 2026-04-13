@@ -403,6 +403,35 @@ async def get_bugs_by_status(status: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def delete_bugs_by_reporter(user_id: str) -> None:
+    await _db().execute("DELETE FROM bugs WHERE reporter_id = ?", (user_id,))
+    await _db().commit()
+
+
+async def renumber_bug_ids() -> None:
+    # Renumber in oldest->newest order to keep IDs compact after deletions.
+    cur = await _db().execute("SELECT bug_id FROM bugs ORDER BY submitted_at ASC")
+    rows = await cur.fetchall()
+    old_ids = [str(r["bug_id"]) for r in rows]
+    if not old_ids:
+        return
+
+    # Phase 1: move all to temporary IDs to avoid primary-key collisions.
+    for idx, old_id in enumerate(old_ids, start=1):
+        tmp_id = f"TMPBUG-{idx:03d}"
+        await _db().execute("UPDATE bugs SET bug_id = ? WHERE bug_id = ?", (tmp_id, old_id))
+        await _db().execute("UPDATE bugs SET duplicate_of = ? WHERE duplicate_of = ?", (tmp_id, old_id))
+
+    # Phase 2: assign final sequential BUG-xxx IDs.
+    for idx in range(1, len(old_ids) + 1):
+        tmp_id = f"TMPBUG-{idx:03d}"
+        new_id = f"BUG-{idx:03d}"
+        await _db().execute("UPDATE bugs SET bug_id = ? WHERE bug_id = ?", (new_id, tmp_id))
+        await _db().execute("UPDATE bugs SET duplicate_of = ? WHERE duplicate_of = ?", (new_id, tmp_id))
+
+    await _db().commit()
+
+
 async def get_all_open_bug_titles() -> list[str]:
     cur = await _db().execute(
         "SELECT title FROM bugs WHERE status IN ('submitted', 'validated')"

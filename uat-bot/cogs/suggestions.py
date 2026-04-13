@@ -67,6 +67,27 @@ class Suggestions(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    async def _earning_dm_embed(self, user_id: str, title: str, detail: str) -> discord.Embed:
+        ws = get_week_start(today_pht())
+        weekly = await db.get_or_create_earnings(user_id, ws)
+        total = int(weekly.get("total_earned") or 0)
+        cap = await config.get_rate("weekly_cap")
+        dc = await db.get_daily_counts(user_id, today_pht())
+        bug_limit = await config.get_rate("daily_bug_limit")
+        sug_limit = await config.get_rate("daily_suggestion_limit")
+        e = discord.Embed(title=title, description=detail, color=embeds.EMBED_COLOR)
+        e.add_field(
+            name="Current stats",
+            value=(
+                f"Weekly balance: ₱{total} / ₱{cap}\n"
+                f"Weekly cap remaining: ₱{max(0, cap - total)}\n"
+                f"Daily bug slots left: {max(0, bug_limit - int(dc.get('bugs_today', 0)))}\n"
+                f"Daily suggestion slots left: {max(0, sug_limit - int(dc.get('suggestions_today', 0)))}"
+            ),
+            inline=False,
+        )
+        return e
+
     @app_commands.command(name="suggest", description="Submit a suggestion")
     async def suggest(self, interaction: discord.Interaction) -> None:
         if not await is_active_tester(interaction):
@@ -199,9 +220,12 @@ class Suggestions(commands.Cog):
                     f"Weekly total: ₱{total} / ₱{cap}"
                 )
             try:
-                await submitter.send(
-                    f"Congratulations! Your suggestion {sug['suggestion_id']} was implemented. +₱{bonus} bonus."
+                dm = await self._earning_dm_embed(
+                    rid,
+                    f"Suggestion {sug['suggestion_id']} implemented",
+                    f"Your suggestion was implemented. **+₱{bonus}** bonus added to your earnings.",
                 )
+                await submitter.send(embed=dm)
             except discord.HTTPException:
                 pass
             await log_event(
@@ -271,7 +295,12 @@ class Suggestions(commands.Cog):
                 pass
         try:
             submitter = await self.bot.fetch_user(int(submitter_id))
-            await submitter.send(f"Your suggestion {sug['suggestion_id']} has been acknowledged! ₱{rate} added to your earnings.")
+            dm = await self._earning_dm_embed(
+                submitter_id,
+                f"Suggestion {sug['suggestion_id']} acknowledged",
+                f"Your suggestion has been acknowledged. **+₱{rate}** added to your earnings.",
+            )
+            await submitter.send(embed=dm)
         except discord.HTTPException:
             pass
         await interaction.response.send_message(embed=embeds.success_embed(f"{sug['suggestion_id']} acknowledged and credited."), ephemeral=True)

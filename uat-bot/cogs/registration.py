@@ -430,6 +430,28 @@ class Registration(commands.Cog):
                 failed += 1
         return {"sent": success, "failed": failed, "changes": len(changed_lines)}
 
+    async def _cleanup_tester_bugs(self, user_id: str) -> int:
+        rows = await db.get_user_bugs(user_id, "all")
+        for bug in rows:
+            if bug.get("thread_id"):
+                try:
+                    th = await self.bot.fetch_channel(int(str(bug["thread_id"])))
+                    if isinstance(th, discord.Thread):
+                        await th.edit(archived=True, locked=True)
+                except (discord.HTTPException, ValueError):
+                    pass
+            if bug.get("message_id"):
+                ch = await config.get_channel(self.bot, "channel_bug_reports")
+                if ch:
+                    try:
+                        m = await ch.fetch_message(int(str(bug["message_id"])))
+                        await m.delete()
+                    except (discord.HTTPException, ValueError):
+                        pass
+        await db.delete_bugs_by_reporter(user_id)
+        await db.renumber_bug_ids()
+        return len(rows)
+
     @app_commands.command(name="register", description="Register as a UAT tester")
     @app_commands.describe(invite_code="Optional invite code (required only if owner enables it)")
     async def register(self, interaction: discord.Interaction, invite_code: str | None = None) -> None:
@@ -1026,6 +1048,7 @@ class Registration(commands.Cog):
                 await i.response.send_message("Not for you.", ephemeral=True)
                 return
             await db.deactivate_tester(uid)
+            removed = await self._cleanup_tester_bugs(uid)
             if interaction.guild:
                 role = await config.get_role(interaction.guild, "role_tester")
                 member = interaction.guild.get_member(user.id)
@@ -1043,7 +1066,7 @@ class Registration(commands.Cog):
             await log_event(
                 self.bot,
                 "TESTER_DEACTIVATE",
-                {"user_id": uid, "by": str(interaction.user.id)},
+                {"user_id": uid, "by": str(interaction.user.id), "bugs_removed": removed},
             )
             await i.response.edit_message(content="Tester deactivated.", embed=None, view=None)
 
@@ -1135,6 +1158,7 @@ class Registration(commands.Cog):
                 except discord.HTTPException:
                     pass
         await db.unregister_tester(uid)
+        removed = await self._cleanup_tester_bugs(uid)
         try:
             await user.send(
                 embed=embeds.confirmation_embed(
@@ -1147,10 +1171,12 @@ class Registration(commands.Cog):
         await log_event(
             self.bot,
             "TESTER_UNREGISTER",
-            {"user_id": uid, "by": str(interaction.user.id)},
+            {"user_id": uid, "by": str(interaction.user.id), "bugs_removed": removed},
         )
         await interaction.followup.send(
-            embed=embeds.success_embed(f"Unregistered {tester.get('display_name', user.display_name)}."),
+            embed=embeds.success_embed(
+                f"Unregistered {tester.get('display_name', user.display_name)}. Removed {removed} bug ticket(s) and renumbered remaining bug IDs."
+            ),
             ephemeral=True,
         )
 
