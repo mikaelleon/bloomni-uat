@@ -423,19 +423,21 @@ class Registration(commands.Cog):
         )
 
     async def approve_application(self, interaction: discord.Interaction, application_id: int) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         application = await db.get_application(application_id)
         if not application or application.get("status") != "pending":
-            await interaction.response.send_message("Application no longer pending.", ephemeral=True)
+            await interaction.followup.send("Application no longer pending.", ephemeral=True)
             return
         uid = str(application["user_id"])
         if await db.get_tester(uid):
             await db.set_application_status(application_id, "rejected", now_pht(), "Already registered.")
-            await interaction.response.send_message("User is already a tester.", ephemeral=True)
+            await interaction.followup.send("User is already a tester.", ephemeral=True)
             return
         try:
             enc = encrypt_gcash(str(application["gcash_number"]).strip())
         except RuntimeError:
-            await interaction.response.send_message("FERNET_KEY missing. Cannot approve application.", ephemeral=True)
+            await interaction.followup.send("FERNET_KEY missing. Cannot approve application.", ephemeral=True)
             return
         await db.create_tester(
             uid,
@@ -485,19 +487,25 @@ class Registration(commands.Cog):
             embed = interaction.message.embeds[0]
             embed.set_footer(text="Status: approved")
             await interaction.message.edit(embed=embed, view=None)
-        await interaction.response.send_message(f"Application #{application_id} approved.", ephemeral=True)
+        await interaction.followup.send(f"Application #{application_id} approved.", ephemeral=True)
         await log_event(self.bot, "APPLICATION_APPROVE", {"application_id": application_id, "by": str(interaction.user.id)})
 
     async def reject_application(
         self, interaction: discord.Interaction, application_id: int, reason: str
     ) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         application = await db.get_application(application_id)
         if not application or application.get("status") != "pending":
-            await interaction.response.send_message("Application no longer pending.", ephemeral=True)
+            await interaction.followup.send("Application no longer pending.", ephemeral=True)
             return
         await db.set_application_status(application_id, "rejected", now_pht(), reason or None)
         uid = int(application["user_id"])
-        await interaction.response.send_message(
+        if interaction.message and interaction.message.embeds:
+            embed = interaction.message.embeds[0]
+            embed.set_footer(text="Status: rejected")
+            await interaction.message.edit(embed=embed, view=None)
+        await interaction.followup.send(
             embed=embeds.success_embed(f"Application #{application_id} rejected."),
             ephemeral=True,
         )
