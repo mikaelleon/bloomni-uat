@@ -102,6 +102,98 @@ class CommitmentView(discord.ui.View):
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.edit_message(content="Registration cancelled.", embed=None, view=None)
 
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item
+    ) -> None:
+        await log_event(
+            self.cog.bot,
+            "REGISTRATION_COMMITMENT_VIEW_ERROR",
+            {
+                "user_id": str(getattr(interaction.user, "id", "unknown")),
+                "item": str(getattr(item, "custom_id", getattr(item, "label", "unknown"))),
+                "error": repr(error),
+            },
+            level="ERROR",
+        )
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    embed=embeds.warning_embed(
+                        "That interaction failed.",
+                        "Please run /register again.",
+                    ),
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    embed=embeds.warning_embed(
+                        "That interaction failed.",
+                        "Please run /register again.",
+                    ),
+                    ephemeral=True,
+                )
+        except discord.HTTPException:
+            pass
+
+
+class ContextLaunchView(discord.ui.View):
+    def __init__(self, cog: "Registration", user_id: int, invite_code: str | None):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.user_id = user_id
+        self.invite_code = invite_code
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("This is not your registration flow.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Continue to Step 2", style=discord.ButtonStyle.primary)
+    async def continue_step2(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(RegistrationContextModalImpl(self.cog, self.invite_code))
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(
+            content="Registration cancelled.",
+            embed=None,
+            view=None,
+        )
+
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item
+    ) -> None:
+        await log_event(
+            self.cog.bot,
+            "REGISTRATION_CONTEXT_LAUNCH_ERROR",
+            {
+                "user_id": str(getattr(interaction.user, "id", "unknown")),
+                "item": str(getattr(item, "custom_id", getattr(item, "label", "unknown"))),
+                "error": repr(error),
+            },
+            level="ERROR",
+        )
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    embed=embeds.warning_embed(
+                        "Could not open step 2 right now.",
+                        "Please run /register again.",
+                    ),
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    embed=embeds.warning_embed(
+                        "Could not open step 2 right now.",
+                        "Please run /register again.",
+                    ),
+                    ephemeral=True,
+                )
+        except discord.HTTPException:
+            pass
+
 
 class TOSView(discord.ui.View):
     def __init__(self, cog: "Registration", invite_code: str | None):
@@ -132,6 +224,39 @@ class TOSView(discord.ui.View):
             view=self,
         )
 
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item
+    ) -> None:
+        await log_event(
+            self.cog.bot,
+            "REGISTRATION_TOS_VIEW_ERROR",
+            {
+                "user_id": str(getattr(interaction.user, "id", "unknown")),
+                "item": str(getattr(item, "custom_id", getattr(item, "label", "unknown"))),
+                "error": repr(error),
+            },
+            level="ERROR",
+        )
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    embed=embeds.warning_embed(
+                        "That interaction failed.",
+                        "Please run /register again.",
+                    ),
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    embed=embeds.warning_embed(
+                        "That interaction failed.",
+                        "Please run /register again.",
+                    ),
+                    ephemeral=True,
+                )
+        except discord.HTTPException:
+            pass
+
 
 class Registration(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -158,10 +283,20 @@ class Registration(commands.Cog):
             )
             return
         uid = str(interaction.user.id)
-        if await db.get_tester(uid):
+        existing = await db.get_tester(uid)
+        if existing and int(existing.get("is_active", 0)):
             await interaction.response.send_message(
                 embed=embeds.error_embed(
                     "You're already registered. Use /update-gcash to change your GCash number."
+                ),
+                ephemeral=True,
+            )
+            return
+        if existing and not int(existing.get("is_active", 0)):
+            await interaction.response.send_message(
+                embed=embeds.warning_embed(
+                    "Your tester account is currently deactivated.",
+                    "Ask the owner to run /tester unregister if you should re-register from scratch, or /tester reactivate if you should continue your previous account.",
                 ),
                 ephemeral=True,
             )
@@ -216,7 +351,15 @@ class Registration(commands.Cog):
         uid = str(interaction.user.id)
         self._identity_cache[uid] = identity_payload
         invite_code = self._invite_code_cache.get(uid, "")
-        await interaction.response.send_modal(RegistrationContextModalImpl(self, invite_code))
+        e = embeds.confirmation_embed(
+            "Step 1 complete",
+            "Click **Continue to Step 2** to complete your application.",
+        )
+        await interaction.response.send_message(
+            embed=e,
+            view=ContextLaunchView(self, interaction.user.id, invite_code),
+            ephemeral=True,
+        )
 
     async def submit_application(self, interaction: discord.Interaction, context_payload: dict) -> None:
         uid = str(interaction.user.id)
@@ -535,9 +678,10 @@ class Registration(commands.Cog):
 
     @tester.command(name="deactivate", description="Deactivate a tester")
     @app_commands.describe(user="Tester to deactivate")
-    async def tester_deactivate(self, interaction: discord.Interaction, user: discord.Member) -> None:
+    async def tester_deactivate(self, interaction: discord.Interaction, user: discord.User) -> None:
+        await interaction.response.defer(ephemeral=True)
         if not await is_owner(interaction):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embeds.error_embed("Only the bot owner can use this."),
                 ephemeral=True,
             )
@@ -545,7 +689,7 @@ class Registration(commands.Cog):
         uid = str(user.id)
         t = await db.get_tester(uid)
         if not t or not int(t.get("is_active", 0)):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embeds.error_embed("Tester not found or already inactive."),
                 ephemeral=True,
             )
@@ -560,11 +704,15 @@ class Registration(commands.Cog):
             await db.deactivate_tester(uid)
             if interaction.guild:
                 role = await config.get_role(interaction.guild, "role_tester")
-                if role and user:
-                    await user.remove_roles(role, reason="Tester deactivated")
+                member = interaction.guild.get_member(user.id)
+                if role and member:
+                    await member.remove_roles(role, reason="Tester deactivated")
             try:
                 await user.send(
-                    "Your tester account has been deactivated. Contact the owner if you think this is a mistake."
+                    embed=embeds.warning_embed(
+                        "Your tester account has been deactivated.",
+                        "Contact the owner if you think this is a mistake.",
+                    )
                 )
             except discord.HTTPException:
                 pass
@@ -587,7 +735,7 @@ class Registration(commands.Cog):
         b2.callback = cancel
         view.add_item(b1)
         view.add_item(b2)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=embeds.confirmation_embed(
                 "Deactivate tester",
                 f"Deactivate **{t.get('display_name', user.display_name)}**?",
@@ -598,9 +746,10 @@ class Registration(commands.Cog):
 
     @tester.command(name="reactivate", description="Reactivate a tester")
     @app_commands.describe(user="Tester to reactivate")
-    async def tester_reactivate(self, interaction: discord.Interaction, user: discord.Member) -> None:
+    async def tester_reactivate(self, interaction: discord.Interaction, user: discord.User) -> None:
+        await interaction.response.defer(ephemeral=True)
         if not await is_owner(interaction):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embeds.error_embed("Only the bot owner can use this."),
                 ephemeral=True,
             )
@@ -608,7 +757,7 @@ class Registration(commands.Cog):
         uid = str(user.id)
         t = await db.get_tester(uid)
         if not t or int(t.get("is_active", 0)):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embeds.error_embed("Tester not found or already active."),
                 ephemeral=True,
             )
@@ -616,10 +765,13 @@ class Registration(commands.Cog):
         await db.reactivate_tester(uid)
         if interaction.guild:
             role = await config.get_role(interaction.guild, "role_tester")
-            if role:
-                await user.add_roles(role, reason="Tester reactivated")
+            member = interaction.guild.get_member(user.id)
+            if role and member:
+                await member.add_roles(role, reason="Tester reactivated")
         try:
-            await user.send("Your tester account has been reactivated! Welcome back.")
+            await user.send(
+                embed=embeds.success_embed("Your tester account has been reactivated! Welcome back.")
+            )
         except discord.HTTPException:
             pass
         await log_event(
@@ -627,8 +779,54 @@ class Registration(commands.Cog):
             "TESTER_REACTIVATE",
             {"user_id": uid, "by": str(interaction.user.id)},
         )
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=embeds.success_embed("Tester reactivated."),
+            ephemeral=True,
+        )
+
+    @tester.command(name="unregister", description="Fully unregister a tester from the program")
+    @app_commands.describe(user="Tester to fully unregister")
+    async def tester_unregister(self, interaction: discord.Interaction, user: discord.User) -> None:
+        await interaction.response.defer(ephemeral=True)
+        if not await is_owner(interaction):
+            await interaction.followup.send(
+                embed=embeds.error_embed("Only the bot owner can use this."),
+                ephemeral=True,
+            )
+            return
+        uid = str(user.id)
+        tester = await db.get_tester(uid)
+        if not tester:
+            await interaction.followup.send(
+                embed=embeds.error_embed("That user is not registered."),
+                ephemeral=True,
+            )
+            return
+        if interaction.guild:
+            role = await config.get_role(interaction.guild, "role_tester")
+            member = interaction.guild.get_member(user.id)
+            if role and member:
+                try:
+                    await member.remove_roles(role, reason="Tester unregistered")
+                except discord.HTTPException:
+                    pass
+        await db.unregister_tester(uid)
+        try:
+            await user.send(
+                embed=embeds.confirmation_embed(
+                    "UAT Unregistration Notice",
+                    "Your tester account has been unregistered from the UAT program. You may apply again through /register if invited.",
+                )
+            )
+        except discord.HTTPException:
+            pass
+        await log_event(
+            self.bot,
+            "TESTER_UNREGISTER",
+            {"user_id": uid, "by": str(interaction.user.id)},
+        )
+        await interaction.followup.send(
+            embed=embeds.success_embed(f"Unregistered {tester.get('display_name', user.display_name)}."),
             ephemeral=True,
         )
 
@@ -656,6 +854,40 @@ class ApplicationReviewView(discord.ui.View):
             await interaction.response.send_message("Only owner can review applications.", ephemeral=True)
             return
         await interaction.response.send_modal(ApplicationRejectModalImpl(self.cog, self.application_id))
+
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item
+    ) -> None:
+        await log_event(
+            self.cog.bot,
+            "APPLICATION_REVIEW_VIEW_ERROR",
+            {
+                "application_id": self.application_id,
+                "user_id": str(getattr(interaction.user, "id", "unknown")),
+                "item": str(getattr(item, "custom_id", getattr(item, "label", "unknown"))),
+                "error": repr(error),
+            },
+            level="ERROR",
+        )
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    embed=embeds.warning_embed(
+                        "Action failed while reviewing application.",
+                        "Please try again.",
+                    ),
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    embed=embeds.warning_embed(
+                        "Action failed while reviewing application.",
+                        "Please try again.",
+                    ),
+                    ephemeral=True,
+                )
+        except discord.HTTPException:
+            pass
 
 
 

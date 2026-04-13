@@ -247,6 +247,14 @@ async def reactivate_tester(user_id: str) -> None:
     await _db().commit()
 
 
+async def unregister_tester(user_id: str) -> None:
+    # Remove related mutable tracking rows, then remove tester profile.
+    await _db().execute("DELETE FROM daily_counts WHERE user_id = ?", (user_id,))
+    await _db().execute("DELETE FROM earnings WHERE user_id = ?", (user_id,))
+    await _db().execute("DELETE FROM testers WHERE user_id = ?", (user_id,))
+    await _db().commit()
+
+
 async def get_all_testers(active_only: bool = True) -> list[dict]:
     if active_only:
         cur = await _db().execute("SELECT * FROM testers WHERE is_active = 1 ORDER BY display_name")

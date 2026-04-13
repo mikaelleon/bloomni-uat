@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import traceback
 from pathlib import Path
 
 import discord
 from discord.errors import ConnectionClosed, LoginFailure
+from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
@@ -55,6 +57,31 @@ class UATBot(commands.Bot):
             )
             synced = await self.tree.sync()
             print(f"Synced {len(synced)} global application command(s).")
+
+    async def on_error(self, event_method: str, *args, **kwargs) -> None:
+        print(f"[EVENT_ERROR] event={event_method}")
+        print(traceback.format_exc())
+
+    async def on_app_command_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ) -> None:
+        print(
+            f"[APP_CMD_ERROR] command={getattr(interaction.command, 'qualified_name', 'unknown')} "
+            f"user_id={getattr(interaction.user, 'id', 'unknown')} "
+            f"guild_id={getattr(interaction.guild, 'id', 'dm')}"
+        )
+        print("".join(traceback.format_exception(type(error), error, error.__traceback__)))
+        try:
+            msg = (
+                "That action failed. Please try again.\n"
+                "If it keeps failing, ask the owner to check bot logs."
+            )
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except discord.HTTPException:
+            pass
 
 
 def main() -> None:
