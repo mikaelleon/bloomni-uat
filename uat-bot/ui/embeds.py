@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import discord
 
@@ -139,32 +139,6 @@ def suggestion_embed(suggestion: dict, submitter: discord.User) -> discord.Embed
     return e
 
 
-def earnings_embed(tester: dict, earnings: dict, cap: int) -> discord.Embed:
-    br = int(earnings.get("bugs_submitted") or 0)
-    bres = int(earnings.get("bugs_resolved") or 0)
-    ss = int(earnings.get("suggestions_submitted") or 0)
-    si = int(earnings.get("suggestions_implemented") or 0)
-    total = int(earnings.get("total_earned") or 0)
-    paid = int(earnings.get("is_paid") or 0)
-    # Per-line amounts require rates — caller passes computed in description or we show counts
-    e = _embed(
-        title=f"Weekly earnings — {tester.get('display_name', 'Tester')}",
-        description=f"**Week start:** {earnings.get('week_start', '—')}",
-    )
-    e.add_field(name="Bugs reported", value=str(br), inline=True)
-    e.add_field(name="Bugs resolved (bonus)", value=str(bres), inline=True)
-    e.add_field(name="Suggestions submitted", value=str(ss), inline=True)
-    e.add_field(name="Suggestions implemented", value=str(si), inline=True)
-    e.add_field(name="Total this week", value=f"₱{total}", inline=True)
-    e.add_field(name="Cap remaining", value=f"₱{max(0, cap - total)} / ₱{cap}", inline=True)
-    e.add_field(
-        name="Payout status",
-        value="✅ Paid" if paid else "⏳ Pending",
-        inline=False,
-    )
-    return e
-
-
 def earnings_embed_detailed(
     display_name: str,
     week_label: str,
@@ -184,33 +158,13 @@ def earnings_embed_detailed(
         title=f"📊 Weekly earnings — {display_name}",
         description=f"**Week:** {week_label}",
     )
-    e.add_field(
-        name="Bugs reported",
-        value=f"{bugs_submitted} → +₱{earn_bug_sub}",
-        inline=False,
-    )
-    e.add_field(
-        name="Bugs resolved (bonus)",
-        value=f"{bugs_resolved} → +₱{earn_bug_res}",
-        inline=False,
-    )
-    e.add_field(
-        name="Suggestions submitted",
-        value=f"{suggestions_submitted} → +₱{earn_sug_sub}",
-        inline=False,
-    )
-    e.add_field(
-        name="Suggestions implemented",
-        value=f"{suggestions_implemented} → +₱{earn_sug_imp}",
-        inline=False,
-    )
+    e.add_field(name="Bugs reported", value=f"{bugs_submitted} → +₱{earn_bug_sub}", inline=False)
+    e.add_field(name="Bugs resolved (bonus)", value=f"{bugs_resolved} → +₱{earn_bug_res}", inline=False)
+    e.add_field(name="Suggestions submitted", value=f"{suggestions_submitted} → +₱{earn_sug_sub}", inline=False)
+    e.add_field(name="Suggestions implemented", value=f"{suggestions_implemented} → +₱{earn_sug_imp}", inline=False)
     e.add_field(name="Total this week", value=f"₱{total}", inline=True)
     e.add_field(name="Cap remaining", value=f"₱{max(0, cap - total)} / ₱{cap}", inline=True)
-    e.add_field(
-        name="Payout status",
-        value="✅ Paid" if is_paid else "⏳ Pending",
-        inline=False,
-    )
+    e.add_field(name="Payout status", value="✅ Paid" if is_paid else "⏳ Pending", inline=False)
     return e
 
 
@@ -238,16 +192,20 @@ def rates_embed(config: dict) -> discord.Embed:
         ),
         inline=False,
     )
-    e.add_field(
-        name="Payout",
-        value=f"Payout day: {config.get('payout_day', 'Monday')} (PH time)",
-        inline=False,
-    )
+    e.add_field(name="Payout", value=f"Payout day: {config.get('payout_day', 'Monday')} (PH time)", inline=False)
     return e
 
 
+def warning_embed(message: str, suggestion: str | None = None) -> discord.Embed:
+    description = message.strip()
+    if suggestion:
+        description += f"\n\n**Suggestion:** {suggestion.strip()}"
+    return _embed(title="Heads up", description=description)
+
+
 def error_embed(message: str) -> discord.Embed:
-    return _embed(title="Error", description=message)
+    # Backward-compatible alias so existing command code reads as warning-style UX.
+    return warning_embed(message, "Try again, or ask an admin/owner for help if this continues.")
 
 
 def success_embed(message: str) -> discord.Embed:

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 
@@ -14,6 +14,7 @@ from utils import config
 from utils.checks import is_active_tester, is_admin, is_owner
 from utils.crypto import encrypt_gcash, mask_gcash
 from utils.time_utils import get_week_start, now_pht, today_pht
+from utils.logging import log_event
 
 
 GCASH_RE = re.compile(r"^09\d{9}$")
@@ -141,18 +142,15 @@ class Registration(commands.Cog):
             embed=embeds.success_embed("You're registered! Check your DMs."),
             ephemeral=True,
         )
-        log_ch = await config.get_channel(self.bot, "channel_bot_logs")
-        if log_ch:
-            await log_ch.send(
-                embed=embeds.bot_log_embed(
-                    "REGISTRATION",
-                    {
-                        "user_id": uid,
-                        "display_name": display_name,
-                        "timestamp": now_pht().isoformat(),
-                    },
-                )
-            )
+        await log_event(
+            self.bot,
+            "REGISTRATION",
+            {
+                "user_id": uid,
+                "display_name": display_name,
+                "timestamp": now_pht().isoformat(),
+            },
+        )
 
     @app_commands.command(name="update-gcash", description="Update your GCash number")
     async def update_gcash(self, interaction: discord.Interaction) -> None:
@@ -186,14 +184,11 @@ class Registration(commands.Cog):
             embed=embeds.success_embed("GCash number updated. Check your DMs for confirmation."),
             ephemeral=True,
         )
-        log_ch = await config.get_channel(self.bot, "channel_bot_logs")
-        if log_ch:
-            await log_ch.send(
-                embed=embeds.bot_log_embed(
-                    "GCASH_UPDATE",
-                    {"user_id": uid, "timestamp": now_pht().isoformat()},
-                )
-            )
+        await log_event(
+            self.bot,
+            "GCASH_UPDATE",
+            {"user_id": uid, "timestamp": now_pht().isoformat()},
+        )
 
     tester = app_commands.Group(name="tester", description="Tester management")
 
@@ -249,9 +244,9 @@ class Registration(commands.Cog):
                 uname = str(u)
             except discord.HTTPException:
                 uname = "unknown"
-            act = "✅" if int(t.get("is_active", 0)) else "❌"
+            act = "âœ…" if int(t.get("is_active", 0)) else "âŒ"
             lines.append(
-                f"**{t.get('display_name', '?')}** — {uname} — {act} — weeks: {t.get('weeks_active', 0)}"
+                f"**{t.get('display_name', '?')}** â€” {uname} â€” {act} â€” weeks: {t.get('weeks_active', 0)}"
             )
         chunk = 5
         pages: list[discord.Embed] = []
@@ -305,14 +300,11 @@ class Registration(commands.Cog):
                 )
             except discord.HTTPException:
                 pass
-            log_ch = await config.get_channel(self.bot, "channel_bot_logs")
-            if log_ch:
-                await log_ch.send(
-                    embed=embeds.bot_log_embed(
-                        "TESTER_DEACTIVATE",
-                        {"user_id": uid, "by": str(interaction.user.id)},
-                    )
-                )
+            await log_event(
+                self.bot,
+                "TESTER_DEACTIVATE",
+                {"user_id": uid, "by": str(interaction.user.id)},
+            )
             await i.response.edit_message(content="Tester deactivated.", embed=None, view=None)
 
         async def cancel(i: discord.Interaction) -> None:
@@ -362,14 +354,11 @@ class Registration(commands.Cog):
             await user.send("Your tester account has been reactivated! Welcome back.")
         except discord.HTTPException:
             pass
-        log_ch = await config.get_channel(self.bot, "channel_bot_logs")
-        if log_ch:
-            await log_ch.send(
-                embed=embeds.bot_log_embed(
-                    "TESTER_REACTIVATE",
-                    {"user_id": uid, "by": str(interaction.user.id)},
-                )
-            )
+        await log_event(
+            self.bot,
+            "TESTER_REACTIVATE",
+            {"user_id": uid, "by": str(interaction.user.id)},
+        )
         await interaction.response.send_message(
             embed=embeds.success_embed("Tester reactivated."),
             ephemeral=True,
@@ -378,3 +367,9 @@ class Registration(commands.Cog):
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Registration(bot))
+
+
+
+
+
+

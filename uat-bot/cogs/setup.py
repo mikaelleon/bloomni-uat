@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 from typing import Any
@@ -20,6 +20,7 @@ from ui.modals import (
 from utils import config
 from utils.checks import is_owner
 from utils.parsing import parse_rates_block, parse_snowflake
+from utils.logging import log_event
 
 setup_sessions: dict[int, dict[str, Any]] = {}
 
@@ -37,13 +38,8 @@ def _session(uid: int) -> dict[str, Any]:
     return setup_sessions[uid]
 
 
-async def _safe_send_log(bot, embed: discord.Embed) -> None:
-    ch = await config.get_channel(bot, "channel_bot_logs")
-    if ch:
-        try:
-            await ch.send(embed=embed)
-        except discord.HTTPException:
-            pass
+async def _safe_send_log(bot, action: str, details: dict[str, Any]) -> None:
+    await log_event(bot, action, details)
 
 
 class Setup(commands.Cog):
@@ -80,7 +76,7 @@ class Setup(commands.Cog):
         _session(uid)["step"] = 1
         await interaction.response.send_message(
             embed=embeds.confirmation_embed(
-                "Step 1 — Roles",
+                "Step 1 â€” Roles",
                 "Should I **create** UAT roles, or **map** existing roles?",
             ),
             view=RoleStepView(self),
@@ -153,7 +149,7 @@ class Setup(commands.Cog):
         everyone = guild.default_role
         admin_role = guild.get_role(admin_id)
         tester_role = guild.get_role(tester_id)
-        cat = await guild.create_category("📋 UAT Testing")
+        cat = await guild.create_category("ðŸ“‹ UAT Testing")
         over_bot_logs = {
             everyone: discord.PermissionOverwrite(view_channel=False),
             guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True),
@@ -210,7 +206,7 @@ class Setup(commands.Cog):
     async def step3_rates(self, interaction: discord.Interaction, uid: int) -> None:
         await interaction.response.send_message(
             embed=embeds.confirmation_embed(
-                "Step 3 — Rates",
+                "Step 3 â€” Rates",
                 "Default rates are shown in the next modal placeholder. Click **Edit rates**.",
             ),
             view=RatesStepView(self, uid),
@@ -219,7 +215,7 @@ class Setup(commands.Cog):
 
     async def step4_features(self, interaction: discord.Interaction, uid: int) -> None:
         await interaction.response.send_message(
-            embed=embeds.confirmation_embed("Step 4 — Features", "Edit the feature list for `/suggest`."),
+            embed=embeds.confirmation_embed("Step 4 â€” Features", "Edit the feature list for `/suggest`."),
             view=FeaturesStepView(self, uid),
             ephemeral=True,
         )
@@ -227,7 +223,7 @@ class Setup(commands.Cog):
     async def step5_milestones(self, interaction: discord.Interaction, uid: int) -> None:
         await interaction.response.send_message(
             embed=embeds.confirmation_embed(
-                "Step 5 — Milestones",
+                "Step 5 â€” Milestones",
                 "Add a milestone now or skip.",
             ),
             view=MilestoneStepView(self, uid),
@@ -283,10 +279,7 @@ class Setup(commands.Cog):
             embed=embeds.success_embed("Setup complete! Guidelines posted and pinned."),
             ephemeral=True,
         )
-        await _safe_send_log(
-            self.bot,
-            embeds.bot_log_embed("SETUP_COMPLETE", {"by": str(uid)}),
-        )
+        await _safe_send_log(self.bot, "SETUP_COMPLETE", {"by": str(uid)})
 
 
 class RoleStepView(discord.ui.View):
@@ -308,7 +301,7 @@ class RoleStepView(discord.ui.View):
             view=None,
         )
         await interaction.followup.send(
-            embed=embeds.confirmation_embed("Step 2 — Channels", "Create channels or map existing?"),
+            embed=embeds.confirmation_embed("Step 2 â€” Channels", "Create channels or map existing?"),
             view=ChannelStepView(self.cog),
             ephemeral=True,
         )
@@ -349,7 +342,7 @@ class ExistingRolesModalImpl(ExistingRolesModal):
             ephemeral=True,
         )
         await interaction.followup.send(
-            embed=embeds.confirmation_embed("Step 2 — Channels", "Create channels or map existing?"),
+            embed=embeds.confirmation_embed("Step 2 â€” Channels", "Create channels or map existing?"),
             view=ChannelStepView(self.cog),
             ephemeral=True,
         )
@@ -372,7 +365,7 @@ class ChannelStepView(discord.ui.View):
         await interaction.followup.send(embed=embeds.success_embed("Channels created."), ephemeral=True)
         await interaction.followup.send(
             embed=embeds.confirmation_embed(
-                "Step 3 — Rates",
+                "Step 3 â€” Rates",
                 "Click **Edit rates** to open the modal (defaults in placeholder).",
             ),
             view=RatesStepView(self.cog, uid),
@@ -426,7 +419,7 @@ class ExistingChannelsModalImpl(ExistingChannelsModal):
         await interaction.response.send_message(embed=embeds.success_embed("Channels saved."), ephemeral=True)
         await interaction.followup.send(
             embed=embeds.confirmation_embed(
-                "Step 3 — Rates",
+                "Step 3 â€” Rates",
                 "Click **Edit rates** to open the modal.",
             ),
             view=RatesStepView(self.cog, self.uid),
@@ -456,7 +449,7 @@ class RatesSetupModalImpl(RatesSetupModal):
             await db.set_config(k, str(v))
         await interaction.response.send_message(embed=embeds.success_embed("Rates saved."), ephemeral=True)
         await interaction.followup.send(
-            embed=embeds.confirmation_embed("Step 4 — Features", "Edit the feature list."),
+            embed=embeds.confirmation_embed("Step 4 â€” Features", "Edit the feature list."),
             view=FeaturesStepView(self.cog, self.uid),
             ephemeral=True,
         )
@@ -496,7 +489,7 @@ class RatesStepView(discord.ui.View):
             ephemeral=True,
         )
         await interaction.followup.send(
-            embed=embeds.confirmation_embed("Step 4 — Features", "Edit the feature list."),
+            embed=embeds.confirmation_embed("Step 4 â€” Features", "Edit the feature list."),
             view=FeaturesStepView(self.cog, self.uid),
             ephemeral=True,
         )
@@ -519,7 +512,7 @@ class FeaturesEditModalImpl(FeaturesEditModal):
         sess["features"] = lines
         await interaction.response.send_message(embed=embeds.success_embed("Features saved."), ephemeral=True)
         await interaction.followup.send(
-            embed=embeds.confirmation_embed("Step 5 — Milestones", "Add a milestone or skip."),
+            embed=embeds.confirmation_embed("Step 5 â€” Milestones", "Add a milestone or skip."),
             view=MilestoneStepView(self.cog, self.uid),
             ephemeral=True,
         )
@@ -548,7 +541,7 @@ class FeaturesStepView(discord.ui.View):
             ephemeral=True,
         )
         await interaction.followup.send(
-            embed=embeds.confirmation_embed("Step 5 — Milestones", "Add a milestone or skip."),
+            embed=embeds.confirmation_embed("Step 5 â€” Milestones", "Add a milestone or skip."),
             view=MilestoneStepView(self.cog, self.uid),
             ephemeral=True,
         )
@@ -619,23 +612,23 @@ class ConfirmSetupView(discord.ui.View):
         self.cog = cog
         self.uid = uid
 
-    @discord.ui.button(label="Confirm Setup", style=discord.ButtonStyle.success, emoji="✅")
+    @discord.ui.button(label="Confirm Setup", style=discord.ButtonStyle.success, emoji="âœ…")
     async def confirm(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         await self.cog.finalize_setup(interaction, self.uid)
 
-    @discord.ui.button(label="Start Over", style=discord.ButtonStyle.danger, emoji="🔄")
+    @discord.ui.button(label="Start Over", style=discord.ButtonStyle.danger, emoji="ðŸ”„")
     async def restart(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         uid = interaction.user.id
         setup_sessions.pop(uid, None)
         _session(uid)["step"] = 1
-        await interaction.response.edit_message(content="Restarting setup…", embed=None, view=None)
+        await interaction.response.edit_message(content="Restarting setupâ€¦", embed=None, view=None)
         await interaction.followup.send(
             embed=embeds.confirmation_embed(
-                "Step 1 — Roles",
+                "Step 1 â€” Roles",
                 "Should I **create** UAT roles, or **map** existing roles?",
             ),
             view=RoleStepView(self.cog),
@@ -645,3 +638,7 @@ class ConfirmSetupView(discord.ui.View):
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Setup(bot))
+
+
+
+

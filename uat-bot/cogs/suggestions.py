@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import discord
 from discord import app_commands
@@ -11,6 +11,7 @@ from ui.views import PaginationView
 from utils import config
 from utils.checks import check_daily_suggestion_limit, check_weekly_cap, is_active_tester, is_owner
 from utils.time_utils import get_week_start, now_pht, today_pht
+from utils.logging import log_event
 
 
 class SuggestionModalImpl(SuggestionModal):
@@ -61,7 +62,7 @@ class FeatureSelectView(discord.ui.View):
 
 
 class Suggestions(commands.Cog):
-    suggestion = app_commands.Group(name="suggestion", description="Suggestions (implement, dismiss, …)")
+    suggestion = app_commands.Group(name="suggestion", description="Suggestions (implement, dismiss, â€¦)")
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -139,7 +140,7 @@ class Suggestions(commands.Cog):
             description=(
                 f"**Title:** {title}\n"
                 f"**Feature:** {feature_tag}\n"
-                f"+₱{rate} added to earnings."
+                f"+â‚±{rate} added to earnings."
             ),
             color=embeds.EMBED_COLOR,
         )
@@ -151,14 +152,11 @@ class Suggestions(commands.Cog):
             embed=embeds.success_embed(f"Suggestion {sid} submitted! Check your DMs."),
             ephemeral=True,
         )
-        log_ch = await config.get_channel(self.bot, "channel_bot_logs")
-        if log_ch:
-            await log_ch.send(
-                embed=embeds.bot_log_embed(
-                    "SUGGESTION_SUBMIT",
-                    {"suggestion_id": sid, "user_id": uid, "timestamp": submitted.isoformat()},
-                )
-            )
+        await log_event(
+            self.bot,
+            "SUGGESTION_SUBMIT",
+            {"suggestion_id": sid, "user_id": uid, "timestamp": submitted.isoformat()},
+        )
 
     @suggestion.command(name="implement", description="Mark a suggestion as implemented")
     @app_commands.describe(suggestion_id="Suggestion ID e.g. SUG-001")
@@ -214,23 +212,20 @@ class Suggestions(commands.Cog):
             payout_ch = await config.get_channel(self.bot, "channel_payout_log")
             if payout_ch:
                 await payout_ch.send(
-                    f"✅ {sug['suggestion_id']} implemented! +₱{bonus} credited to {name}. "
-                    f"Weekly total: ₱{total} / ₱{cap}"
+                    f"âœ… {sug['suggestion_id']} implemented! +â‚±{bonus} credited to {name}. "
+                    f"Weekly total: â‚±{total} / â‚±{cap}"
                 )
             try:
                 await submitter.send(
-                    f"Congratulations! Your suggestion {sug['suggestion_id']} was implemented. +₱{bonus} bonus."
+                    f"Congratulations! Your suggestion {sug['suggestion_id']} was implemented. +â‚±{bonus} bonus."
                 )
             except discord.HTTPException:
                 pass
-            log_ch = await config.get_channel(self.bot, "channel_bot_logs")
-            if log_ch:
-                await log_ch.send(
-                    embed=embeds.bot_log_embed(
-                        "SUGGESTION_IMPLEMENT",
-                        {"suggestion_id": sug["suggestion_id"], "by": str(interaction.user.id)},
-                    )
-                )
+            await log_event(
+                self.bot,
+                "SUGGESTION_IMPLEMENT",
+                {"suggestion_id": sug["suggestion_id"], "by": str(interaction.user.id)},
+            )
             await i.followup.send(embed=embeds.success_embed("Marked implemented."), ephemeral=True)
 
         async def cancel(i: discord.Interaction) -> None:
@@ -248,7 +243,7 @@ class Suggestions(commands.Cog):
         await interaction.response.send_message(
             embed=embeds.confirmation_embed(
                 "Confirm implement",
-                f"Mark {sug['suggestion_id']} as implemented? This will credit +₱{bonus} to {submitter.display_name}.",
+                f"Mark {sug['suggestion_id']} as implemented? This will credit +â‚±{bonus} to {submitter.display_name}.",
             ),
             view=view,
             ephemeral=True,
@@ -298,18 +293,15 @@ class Suggestions(commands.Cog):
             r = reason.strip() if reason else "No reason provided"
             await u.send(
                 f"Your suggestion {suggestion_id} has been dismissed. Reason: {r}. "
-                f"The ₱{rate} submission pay is yours to keep!"
+                f"The â‚±{rate} submission pay is yours to keep!"
             )
         except discord.HTTPException:
             pass
-        log_ch = await config.get_channel(self.bot, "channel_bot_logs")
-        if log_ch:
-            await log_ch.send(
-                embed=embeds.bot_log_embed(
-                    "SUGGESTION_DISMISS",
-                    {"suggestion_id": suggestion_id, "by": str(interaction.user.id)},
-                )
-            )
+        await log_event(
+            self.bot,
+            "SUGGESTION_DISMISS",
+            {"suggestion_id": suggestion_id, "by": str(interaction.user.id)},
+        )
         await interaction.followup.send(embed=embeds.success_embed("Dismissed."), ephemeral=True)
 
     @suggestion.command(name="list", description="List suggestions")
@@ -342,7 +334,7 @@ class Suggestions(commands.Cog):
             t = await db.get_tester(s["submitter_id"])
             dn = t.get("display_name", "?") if t else "?"
             lines.append(
-                f"**{s['suggestion_id']}** — {s['title'][:60]} — {s['feature_tag']} — {dn} — {s['submitted_at']}"
+                f"**{s['suggestion_id']}** â€” {s['title'][:60]} â€” {s['feature_tag']} â€” {dn} â€” {s['submitted_at']}"
             )
         chunk = 5
         pages: list[discord.Embed] = []
@@ -382,3 +374,4 @@ class Suggestions(commands.Cog):
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Suggestions(bot))
+
