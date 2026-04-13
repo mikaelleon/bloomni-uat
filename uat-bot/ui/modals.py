@@ -17,6 +17,76 @@ class RegistrationModal(discord.ui.Modal, title="Tester Registration"):
     )
 
 
+class RegistrationIdentityModal(discord.ui.Modal, title="Tester Registration (1/2)"):
+    display_name = discord.ui.TextInput(
+        label="Display Name",
+        placeholder="What should we call you?",
+        max_length=50,
+        required=True,
+    )
+    full_name = discord.ui.TextInput(
+        label="Full Name (matches GCash)",
+        placeholder="Juan Dela Cruz",
+        max_length=100,
+        required=True,
+    )
+    gcash_number = discord.ui.TextInput(
+        label="GCash Mobile Number",
+        placeholder="09XXXXXXXXX",
+        max_length=11,
+        min_length=11,
+        required=True,
+    )
+    section_relationship = discord.ui.TextInput(
+        label="Section + how we know each other",
+        placeholder="BSIT-3B, classmate",
+        max_length=120,
+        required=True,
+    )
+
+
+class RegistrationContextModal(discord.ui.Modal, title="Tester Registration (2/2)"):
+    hearing_source = discord.ui.TextInput(
+        label="How did you hear about this program?",
+        placeholder="Kim told me",
+        max_length=120,
+        required=True,
+    )
+    availability = discord.ui.TextInput(
+        label="When are you generally free to test?",
+        placeholder="Weekday evenings after 6pm",
+        max_length=120,
+        required=False,
+    )
+    device_platform = discord.ui.TextInput(
+        label="Primary device/platform",
+        placeholder="Windows PC / Android / both",
+        max_length=80,
+        required=False,
+    )
+    prior_experience = discord.ui.TextInput(
+        label="Prior testing/feedback experience?",
+        placeholder="No, but detail-oriented",
+        max_length=150,
+        required=False,
+    )
+    tos_signature = discord.ui.TextInput(
+        label="Type your full name as signature",
+        placeholder="Must match your agreement intent",
+        max_length=100,
+        required=True,
+    )
+
+
+class ApplicationRejectModal(discord.ui.Modal, title="Reject Application"):
+    reason = discord.ui.TextInput(
+        label="Reason (optional)",
+        style=discord.TextStyle.paragraph,
+        required=False,
+        max_length=500,
+    )
+
+
 class UpdateGCashModal(discord.ui.Modal, title="Update GCash"):
     gcash_number = discord.ui.TextInput(
         label="New GCash Number",

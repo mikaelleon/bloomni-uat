@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
 
 import discord
 from discord import app_commands
@@ -8,7 +9,12 @@ from discord.ext import commands
 
 from database import db
 from ui import embeds
-from ui.modals import RegistrationModal, UpdateGCashModal
+from ui.modals import (
+    ApplicationRejectModal,
+    RegistrationContextModal,
+    RegistrationIdentityModal,
+    UpdateGCashModal,
+)
 from ui.views import PaginationView
 from utils import config
 from utils.checks import is_active_tester, is_admin, is_owner
@@ -20,14 +26,20 @@ from utils.logging import log_event
 GCASH_RE = re.compile(r"^09\d{9}$")
 
 
-class RegistrationModalImpl(RegistrationModal):
+class RegistrationIdentityModalImpl(RegistrationIdentityModal):
     def __init__(self, cog: "Registration"):
         super().__init__()
         self.cog = cog
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        await self.cog.process_registration(
-            interaction, str(self.display_name.value), str(self.gcash_number.value)
+        await self.cog.start_context_modal(
+            interaction,
+            {
+                "display_name": str(self.display_name.value).strip(),
+                "full_name": str(self.full_name.value).strip(),
+                "gcash_number": str(self.gcash_number.value).strip(),
+                "section_relationship": str(self.section_relationship.value).strip(),
+            },
         )
 
 
@@ -40,14 +52,74 @@ class UpdateGCashModalImpl(UpdateGCashModal):
         await self.cog.process_update_gcash(interaction, str(self.gcash_number.value))
 
 
-class TOSView(discord.ui.View):
-    def __init__(self, cog: "Registration"):
+class RegistrationContextModalImpl(RegistrationContextModal):
+    def __init__(self, cog: "Registration", invite_code: str | None):
+        super().__init__()
+        self.cog = cog
+        self.invite_code = invite_code
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.cog.submit_application(
+            interaction,
+            {
+                "hearing_source": str(self.hearing_source.value).strip(),
+                "availability": str(self.availability.value or "").strip(),
+                "device_platform": str(self.device_platform.value or "").strip(),
+                "prior_experience": str(self.prior_experience.value or "").strip(),
+                "tos_signature": str(self.tos_signature.value).strip(),
+                "invite_code": self.invite_code or "",
+            },
+        )
+
+
+class ApplicationRejectModalImpl(ApplicationRejectModal):
+    def __init__(self, cog: "Registration", application_id: int):
+        super().__init__()
+        self.cog = cog
+        self.application_id = application_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.cog.reject_application(
+            interaction, self.application_id, str(self.reason.value or "").strip()
+        )
+
+
+class CommitmentView(discord.ui.View):
+    def __init__(self, cog: "Registration", invite_code: str | None):
         super().__init__(timeout=300)
         self.cog = cog
+        self.invite_code = invite_code
+
+    @discord.ui.button(
+        label="I understand this is casual and pay is small",
+        style=discord.ButtonStyle.primary,
+    )
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(RegistrationIdentityModalImpl(self.cog))
+        self.cog._invite_code_cache[str(interaction.user.id)] = self.invite_code or ""
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="Registration cancelled.", embed=None, view=None)
+
+
+class TOSView(discord.ui.View):
+    def __init__(self, cog: "Registration", invite_code: str | None):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.invite_code = invite_code
 
     @discord.ui.button(label="I Accept", style=discord.ButtonStyle.success, custom_id="tos_accept")
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.send_modal(RegistrationModalImpl(self.cog))
+        e = discord.Embed(
+            title="Commitment Acknowledgment",
+            description=(
+                "Before continuing, confirm that you understand this testing program is casual "
+                "and payouts are intentionally small."
+            ),
+            color=embeds.EMBED_COLOR,
+        )
+        await interaction.response.edit_message(embed=e, view=CommitmentView(self.cog, self.invite_code))
 
     @discord.ui.button(label="I Decline", style=discord.ButtonStyle.danger, custom_id="tos_decline")
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -64,9 +136,12 @@ class TOSView(discord.ui.View):
 class Registration(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._identity_cache: dict[str, dict] = {}
+        self._invite_code_cache: dict[str, str] = {}
 
     @app_commands.command(name="register", description="Register as a UAT tester")
-    async def register(self, interaction: discord.Interaction) -> None:
+    @app_commands.describe(invite_code="Optional invite code (required only if owner enables it)")
+    async def register(self, interaction: discord.Interaction, invite_code: str | None = None) -> None:
         if await db.get_config("setup_complete") != "true":
             await interaction.response.send_message(
                 embed=embeds.error_embed(
@@ -91,13 +166,40 @@ class Registration(commands.Cog):
                 ephemeral=True,
             )
             return
-        view = TOSView(self)
+        latest = await db.get_latest_application(uid)
+        if latest and latest.get("status") == "pending":
+            await interaction.response.send_message(
+                embed=embeds.error_embed("You already have a pending application. Please wait for owner review."),
+                ephemeral=True,
+            )
+            return
+        if latest and latest.get("status") == "rejected":
+            reviewed_at = str(latest.get("reviewed_at") or latest.get("created_at") or "")
+            if reviewed_at:
+                reapply_at = datetime.fromisoformat(reviewed_at) + timedelta(days=7)
+                if now_pht() < reapply_at:
+                    await interaction.response.send_message(
+                        embed=embeds.warning_embed(
+                            "Your application was not approved.",
+                            f"You may reapply after {reapply_at.strftime('%d %b %Y, %I:%M %p PHT')}.",
+                        ),
+                        ephemeral=True,
+                    )
+                    return
+        invite_required = (await db.get_config("invite_code_required")).lower() == "true"
+        invite_value = (await db.get_config("invite_code_value")).strip()
+        if invite_required and invite_value:
+            if not invite_code or invite_code.strip() != invite_value:
+                await interaction.response.send_message(
+                    embed=embeds.error_embed("Invalid or missing invite code."),
+                    ephemeral=True,
+                )
+                return
+        view = TOSView(self, invite_code.strip() if invite_code else None)
         await interaction.response.send_message(embed=embeds.tos_embed(), view=view, ephemeral=True)
 
-    async def process_registration(
-        self, interaction: discord.Interaction, display_name: str, gcash_raw: str
-    ) -> None:
-        if not GCASH_RE.match(gcash_raw.strip()):
+    async def start_context_modal(self, interaction: discord.Interaction, identity_payload: dict) -> None:
+        if not GCASH_RE.match(identity_payload["gcash_number"]):
             await interaction.response.send_message(
                 embed=embeds.error_embed(
                     "Invalid GCash number. Use format 09XXXXXXXXX. Run /register again."
@@ -105,34 +207,110 @@ class Registration(commands.Cog):
                 ephemeral=True,
             )
             return
-        await interaction.response.defer(ephemeral=True)
-        uid = str(interaction.user.id)
-        try:
-            enc = encrypt_gcash(gcash_raw.strip())
-        except RuntimeError:
-            await interaction.followup.send(
-                embed=embeds.warning_embed(
-                    "Registration is temporarily unavailable because bot encryption is not configured.",
-                    "Please ask the owner to set FERNET_KEY in uat-bot/.env and restart the bot.",
-                ),
+        if not identity_payload["full_name"]:
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Full name is required."),
                 ephemeral=True,
             )
-            await log_event(
-                self.bot,
-                "REGISTRATION_BLOCKED",
-                {"user_id": uid, "reason": "missing_fernet_key"},
-                level="WARNING",
+            return
+        uid = str(interaction.user.id)
+        self._identity_cache[uid] = identity_payload
+        invite_code = self._invite_code_cache.get(uid, "")
+        await interaction.response.send_modal(RegistrationContextModalImpl(self, invite_code))
+
+    async def submit_application(self, interaction: discord.Interaction, context_payload: dict) -> None:
+        uid = str(interaction.user.id)
+        identity = self._identity_cache.pop(uid, None)
+        self._invite_code_cache.pop(uid, None)
+        if not identity:
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Registration session expired. Please run /register again."),
+                ephemeral=True,
             )
             return
-        await db.create_tester(uid, display_name, enc, now_pht())
+        if not context_payload["hearing_source"] or not context_payload["tos_signature"]:
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Required fields are missing. Please try again."),
+                ephemeral=True,
+            )
+            return
+        payload = {
+            "user_id": uid,
+            **identity,
+            **context_payload,
+        }
+        created = now_pht()
+        application_id = await db.create_application(payload, created)
+        app_channel = await config.get_channel(self.bot, "channel_applications")
+        if not app_channel:
+            app_channel = await config.get_channel(self.bot, "channel_bot_logs")
+        if app_channel:
+            e = discord.Embed(
+                title=f"New Tester Application #{application_id}",
+                color=embeds.EMBED_COLOR,
+                description=f"Applicant: <@{uid}> (`{uid}`)",
+            )
+            e.add_field(name="Display Name", value=payload["display_name"], inline=True)
+            e.add_field(name="Full Name", value=payload["full_name"], inline=True)
+            e.add_field(name="GCash", value=mask_gcash(payload["gcash_number"]), inline=True)
+            e.add_field(name="Section/Relationship", value=payload["section_relationship"], inline=False)
+            e.add_field(name="How heard", value=payload["hearing_source"], inline=False)
+            e.add_field(name="Availability", value=payload.get("availability") or "—", inline=False)
+            e.add_field(name="Device/Platform", value=payload.get("device_platform") or "—", inline=False)
+            e.add_field(name="Prior experience", value=payload.get("prior_experience") or "—", inline=False)
+            e.add_field(name="Signature", value=payload["tos_signature"], inline=False)
+            e.add_field(name="Invite code", value=payload.get("invite_code") or "—", inline=False)
+            e.set_footer(text="Status: pending")
+            await app_channel.send(embed=e, view=ApplicationReviewView(self, application_id))
+        await interaction.response.send_message(
+            embed=embeds.success_embed(
+                "Application submitted. You will be notified once the owner reviews it."
+            ),
+            ephemeral=True,
+        )
+        await log_event(
+            self.bot,
+            "APPLICATION_SUBMIT",
+            {"application_id": application_id, "user_id": uid, "timestamp": created.isoformat()},
+        )
+
+    async def approve_application(self, interaction: discord.Interaction, application_id: int) -> None:
+        application = await db.get_application(application_id)
+        if not application or application.get("status") != "pending":
+            await interaction.response.send_message("Application no longer pending.", ephemeral=True)
+            return
+        uid = str(application["user_id"])
+        if await db.get_tester(uid):
+            await db.set_application_status(application_id, "rejected", now_pht(), "Already registered.")
+            await interaction.response.send_message("User is already a tester.", ephemeral=True)
+            return
+        try:
+            enc = encrypt_gcash(str(application["gcash_number"]).strip())
+        except RuntimeError:
+            await interaction.response.send_message("FERNET_KEY missing. Cannot approve application.", ephemeral=True)
+            return
+        await db.create_tester(
+            uid,
+            str(application["display_name"]),
+            enc,
+            now_pht(),
+            full_name=str(application.get("full_name") or ""),
+            section_relationship=str(application.get("section_relationship") or ""),
+            availability=str(application.get("availability") or ""),
+            device_platform=str(application.get("device_platform") or ""),
+            prior_experience=str(application.get("prior_experience") or ""),
+            hearing_source=str(application.get("hearing_source") or ""),
+            tos_signature=str(application.get("tos_signature") or ""),
+        )
+        await db.set_application_status(application_id, "approved", now_pht())
         if interaction.guild:
             role = await config.get_role(interaction.guild, "role_tester")
-            member = interaction.guild.get_member(interaction.user.id)
+            member = interaction.guild.get_member(int(uid))
             if role and member:
-                await member.add_roles(role, reason="UAT registration")
+                await member.add_roles(role, reason="Application approved")
         ws = get_week_start(today_pht())
         await db.get_or_create_earnings(uid, ws)
-        masked = mask_gcash(gcash_raw.strip())
+        user = await self.bot.fetch_user(int(uid))
         cfg = await db.get_all_config()
         rates = {
             "bug_report_rate": cfg.get("bug_report_rate", "0"),
@@ -149,26 +327,49 @@ class Registration(commands.Cog):
             "guidelines": guide_ch.mention if guide_ch else "#tester-guidelines",
         }
         try:
-            await interaction.user.send(
-                embed=embeds.registration_success_embed(display_name, masked, rates, channels)
+            await user.send(
+                embed=embeds.registration_success_embed(
+                    str(application["display_name"]),
+                    mask_gcash(str(application["gcash_number"])),
+                    rates,
+                    channels,
+                )
             )
         except discord.HTTPException:
             pass
-        await interaction.followup.send(
-            embed=embeds.confirmation_embed(
-                "Registration Complete",
-                "You're registered successfully. Check your DMs for your welcome details.",
-            ),
+        if interaction.message and interaction.message.embeds:
+            embed = interaction.message.embeds[0]
+            embed.set_footer(text="Status: approved")
+            await interaction.message.edit(embed=embed, view=None)
+        await interaction.response.send_message(f"Application #{application_id} approved.", ephemeral=True)
+        await log_event(self.bot, "APPLICATION_APPROVE", {"application_id": application_id, "by": str(interaction.user.id)})
+
+    async def reject_application(
+        self, interaction: discord.Interaction, application_id: int, reason: str
+    ) -> None:
+        application = await db.get_application(application_id)
+        if not application or application.get("status") != "pending":
+            await interaction.response.send_message("Application no longer pending.", ephemeral=True)
+            return
+        await db.set_application_status(application_id, "rejected", now_pht(), reason or None)
+        uid = int(application["user_id"])
+        await interaction.response.send_message(
+            embed=embeds.success_embed(f"Application #{application_id} rejected."),
             ephemeral=True,
         )
+        try:
+            user = await self.bot.fetch_user(uid)
+            msg = "Your tester application was not approved."
+            if reason:
+                msg += f" Reason: {reason}"
+            msg += " You may reapply after 7 days."
+            await user.send(msg)
+        except discord.HTTPException:
+            pass
         await log_event(
             self.bot,
-            "REGISTRATION",
-            {
-                "user_id": uid,
-                "display_name": display_name,
-                "timestamp": now_pht().isoformat(),
-            },
+            "APPLICATION_REJECT",
+            {"application_id": application_id, "by": str(interaction.user.id), "reason": reason or "none"},
         )
 
     @app_commands.command(name="update-gcash", description="Update your GCash number")
@@ -223,6 +424,38 @@ class Registration(commands.Cog):
             self.bot,
             "GCASH_UPDATE",
             {"user_id": uid, "timestamp": now_pht().isoformat()},
+        )
+
+    config_group = app_commands.Group(name="config", description="Owner configuration")
+
+    @config_group.command(name="invite-code", description="Configure invite code gate for /register")
+    @app_commands.describe(required="Require invite code before registration", code="Invite code value")
+    async def config_invite_code(
+        self, interaction: discord.Interaction, required: bool, code: str | None = None
+    ) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(embed=embeds.error_embed("Only the bot owner can use this."), ephemeral=True)
+            return
+        await db.set_config("invite_code_required", "true" if required else "false")
+        await db.set_config("invite_code_value", (code or "").strip())
+        await interaction.response.send_message(
+            embed=embeds.success_embed(
+                f"Invite code gate updated. Required: {'yes' if required else 'no'}."
+            ),
+            ephemeral=True,
+        )
+
+    @config_group.command(name="applications-channel", description="Set private application review channel")
+    async def config_applications_channel(
+        self, interaction: discord.Interaction, channel: discord.TextChannel
+    ) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(embed=embeds.error_embed("Only the bot owner can use this."), ephemeral=True)
+            return
+        await db.set_config("channel_applications", str(channel.id))
+        await interaction.response.send_message(
+            embed=embeds.success_embed(f"Applications channel set to {channel.mention}."),
+            ephemeral=True,
         )
 
     tester = app_commands.Group(name="tester", description="Tester management")
@@ -402,6 +635,27 @@ class Registration(commands.Cog):
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Registration(bot))
+
+
+class ApplicationReviewView(discord.ui.View):
+    def __init__(self, cog: Registration, application_id: int):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.application_id = application_id
+
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success)
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message("Only owner can review applications.", ephemeral=True)
+            return
+        await self.cog.approve_application(interaction, self.application_id)
+
+    @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger)
+    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message("Only owner can review applications.", ephemeral=True)
+            return
+        await interaction.response.send_modal(ApplicationRejectModalImpl(self.cog, self.application_id))
 
 
 

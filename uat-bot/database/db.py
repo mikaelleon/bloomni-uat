@@ -27,11 +27,14 @@ DEFAULT_CONFIG = {
     "channel_bot_logs": "",
     "channel_announcements": "",
     "channel_register_here": "",
+    "channel_applications": "",
     "channel_guidelines": "",
     "role_tester": "",
     "role_admin": "",
     "role_senior_tester": "",
     "setup_complete": "false",
+    "invite_code_required": "false",
+    "invite_code_value": "",
 }
 
 
@@ -57,6 +60,13 @@ async def init_db() -> None:
     await _safe_alter("ALTER TABLE earnings ADD COLUMN suggestions_acknowledged INTEGER NOT NULL DEFAULT 0")
     await _safe_alter("ALTER TABLE bugs ADD COLUMN validated_at DATETIME")
     await _safe_alter("ALTER TABLE suggestions ADD COLUMN acknowledged_at DATETIME")
+    await _safe_alter("ALTER TABLE testers ADD COLUMN full_name TEXT")
+    await _safe_alter("ALTER TABLE testers ADD COLUMN section_relationship TEXT")
+    await _safe_alter("ALTER TABLE testers ADD COLUMN availability TEXT")
+    await _safe_alter("ALTER TABLE testers ADD COLUMN device_platform TEXT")
+    await _safe_alter("ALTER TABLE testers ADD COLUMN prior_experience TEXT")
+    await _safe_alter("ALTER TABLE testers ADD COLUMN hearing_source TEXT")
+    await _safe_alter("ALTER TABLE testers ADD COLUMN tos_signature TEXT")
     await _conn.execute("UPDATE bugs SET status = 'submitted' WHERE status = 'open'")
     await _conn.execute("UPDATE suggestions SET status = 'submitted' WHERE status = 'pending'")
     await _conn.commit()
@@ -65,6 +75,13 @@ async def init_db() -> None:
     if row and row[0] == 0:
         for k, v in DEFAULT_CONFIG.items():
             await _conn.execute("INSERT INTO config (key, value) VALUES (?, ?)", (k, v))
+        await _conn.commit()
+    else:
+        for k, v in DEFAULT_CONFIG.items():
+            await _conn.execute(
+                "INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
+                (k, v),
+            )
         await _conn.commit()
 
 
@@ -123,11 +140,91 @@ async def create_tester(
     display_name: str,
     gcash_encrypted: str,
     registered_at: datetime,
+    full_name: str = "",
+    section_relationship: str = "",
+    availability: str = "",
+    device_platform: str = "",
+    prior_experience: str = "",
+    hearing_source: str = "",
+    tos_signature: str = "",
 ) -> None:
     await _db().execute(
-        """INSERT INTO testers (user_id, display_name, gcash_number, registered_at)
-           VALUES (?, ?, ?, ?)""",
-        (user_id, display_name, gcash_encrypted, registered_at.isoformat()),
+        """INSERT INTO testers (
+            user_id, display_name, full_name, gcash_number, section_relationship,
+            availability, device_platform, prior_experience, hearing_source, tos_signature, registered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            user_id,
+            display_name,
+            full_name,
+            gcash_encrypted,
+            section_relationship,
+            availability,
+            device_platform,
+            prior_experience,
+            hearing_source,
+            tos_signature,
+            registered_at.isoformat(),
+        ),
+    )
+    await _db().commit()
+
+
+async def create_application(payload: dict, created_at: datetime) -> int:
+    cur = await _db().execute(
+        """INSERT INTO applications (
+            user_id, display_name, full_name, gcash_number, section_relationship,
+            hearing_source, availability, device_platform, prior_experience,
+            tos_signature, invite_code, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
+        (
+            payload["user_id"],
+            payload["display_name"],
+            payload["full_name"],
+            payload["gcash_number"],
+            payload["section_relationship"],
+            payload["hearing_source"],
+            payload.get("availability"),
+            payload.get("device_platform"),
+            payload.get("prior_experience"),
+            payload["tos_signature"],
+            payload.get("invite_code"),
+            created_at.isoformat(),
+        ),
+    )
+    await _db().commit()
+    return int(cur.lastrowid or 0)
+
+
+async def get_application(application_id: int) -> dict | None:
+    cur = await _db().execute(
+        "SELECT * FROM applications WHERE application_id = ?",
+        (application_id,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def get_latest_application(user_id: str) -> dict | None:
+    cur = await _db().execute(
+        "SELECT * FROM applications WHERE user_id = ? ORDER BY application_id DESC LIMIT 1",
+        (user_id,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def set_application_status(
+    application_id: int,
+    status: str,
+    reviewed_at: datetime,
+    reject_reason: str | None = None,
+) -> None:
+    await _db().execute(
+        """UPDATE applications
+           SET status = ?, reviewed_at = ?, reject_reason = ?
+           WHERE application_id = ?""",
+        (status, reviewed_at.isoformat(), reject_reason, application_id),
     )
     await _db().commit()
 

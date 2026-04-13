@@ -1,12 +1,38 @@
 CREATE TABLE IF NOT EXISTS testers (
     user_id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
+    full_name TEXT,
     gcash_number TEXT NOT NULL,
+    section_relationship TEXT,
+    availability TEXT,
+    device_platform TEXT,
+    prior_experience TEXT,
+    hearing_source TEXT,
+    tos_signature TEXT,
     registered_at DATETIME NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 1,
     weeks_active INTEGER NOT NULL DEFAULT 0,
     consecutive_weeks INTEGER NOT NULL DEFAULT 0,
     role TEXT NOT NULL DEFAULT 'tester'
+);
+
+CREATE TABLE IF NOT EXISTS applications (
+    application_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    gcash_number TEXT NOT NULL,
+    section_relationship TEXT NOT NULL,
+    hearing_source TEXT NOT NULL,
+    availability TEXT,
+    device_platform TEXT,
+    prior_experience TEXT,
+    tos_signature TEXT NOT NULL,
+    invite_code TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    reject_reason TEXT,
+    created_at DATETIME NOT NULL,
+    reviewed_at DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS bugs (
