@@ -313,6 +313,54 @@ class Registration(commands.Cog):
             "daily_suggestion_limit",
         }
 
+    def _auto_calculate_rates(
+        self,
+        *,
+        weekly_cap: int,
+        daily_bug_limit: int,
+        daily_suggestion_limit: int,
+        bug_weight_percent: int,
+        bug_resolve_bonus_percent: int,
+        suggestion_implement_bonus_percent: int,
+    ) -> dict[str, int]:
+        # Realistic model:
+        # - Use reference rates tuned for a practical weekly effort.
+        # - Scale with weekly cap and gently dampen by daily limits.
+        # - Cap remains the hard safety net at payout time.
+        reference_cap = 100.0
+        cap_scale = max(0.35, (weekly_cap / reference_cap) ** 0.5)
+
+        # Reference rates when cap=100, daily_bug_limit=3, daily_suggestion_limit=1
+        ref_bug_rate = 15.0
+        ref_suggestion_rate = 10.0
+
+        bug_limit_factor = (3.0 / max(1.0, float(daily_bug_limit))) ** 0.35
+        suggestion_limit_factor = (1.0 / max(1.0, float(daily_suggestion_limit))) ** 0.25
+
+        bug_weight_factor = max(0.6, min(1.4, bug_weight_percent / 70.0))
+        suggestion_weight_factor = max(0.6, min(1.4, (100 - bug_weight_percent) / 30.0))
+
+        bug_rate = max(5, round(ref_bug_rate * cap_scale * bug_limit_factor * bug_weight_factor))
+        sug_rate = max(
+            5,
+            round(ref_suggestion_rate * cap_scale * suggestion_limit_factor * suggestion_weight_factor),
+        )
+
+        bug_resolve_bonus = max(3, round(bug_rate * (bug_resolve_bonus_percent / 100.0)))
+        suggestion_implement_bonus = max(
+            3, round(sug_rate * (suggestion_implement_bonus_percent / 100.0))
+        )
+
+        return {
+            "bug_report_rate": bug_rate,
+            "bug_resolve_bonus": bug_resolve_bonus,
+            "suggestion_submit_rate": sug_rate,
+            "suggestion_implement_bonus": suggestion_implement_bonus,
+            "weekly_cap": weekly_cap,
+            "daily_bug_limit": daily_bug_limit,
+            "daily_suggestion_limit": daily_suggestion_limit,
+        }
+
     async def _send_welcome_guide_dm(
         self,
         user: discord.User,
@@ -747,6 +795,16 @@ class Registration(commands.Cog):
                 ephemeral=True,
             )
             return
+        economy_mode = (await db.get_config("economy_mode")).strip().lower() or "manual"
+        if economy_mode == "auto" and key in self._rate_keys:
+            await interaction.response.send_message(
+                embed=embeds.warning_embed(
+                    "Economy mode is set to auto.",
+                    "Use `/config economy-auto` to recalculate all rates from limits/cap, or switch to manual mode first.",
+                ),
+                ephemeral=True,
+            )
+            return
         new_value = value.strip()
         if key in self._rate_keys:
             try:
@@ -774,6 +832,88 @@ class Registration(commands.Cog):
             embed=embeds.success_embed(f"Updated `{key}`."),
             ephemeral=True,
         )
+
+    @config_group.command(name="economy-mode", description="Switch economy mode between manual and auto")
+    @app_commands.describe(mode="manual = direct rates, auto = calculated rates")
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="manual", value="manual"),
+            app_commands.Choice(name="auto", value="auto"),
+        ]
+    )
+    async def config_economy_mode(self, interaction: discord.Interaction, mode: str) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Only the bot owner can use this."),
+                ephemeral=True,
+            )
+            return
+        await db.set_config("economy_mode", mode)
+        await interaction.response.send_message(
+            embed=embeds.success_embed(f"Economy mode set to `{mode}`."),
+            ephemeral=True,
+        )
+
+    @config_group.command(name="economy-auto", description="Auto-calculate all rates from weekly/daily limits")
+    @app_commands.describe(
+        weekly_cap="Weekly earnings cap (e.g. 30)",
+        daily_bug_limit="Daily bug limit (e.g. 2)",
+        daily_suggestion_limit="Daily suggestion limit (e.g. 1)",
+        bug_weight_percent="Daily budget share for bugs (default 70)",
+        bug_resolve_bonus_percent="Bug resolve bonus as % of bug rate (default 60)",
+        sug_implement_bonus_pct="Suggest implement bonus as % of suggestion rate (default 140)",
+    )
+    async def config_economy_auto(
+        self,
+        interaction: discord.Interaction,
+        weekly_cap: int,
+        daily_bug_limit: int,
+        daily_suggestion_limit: int,
+        bug_weight_percent: app_commands.Range[int, 10, 90] = 70,
+        bug_resolve_bonus_percent: app_commands.Range[int, 10, 200] = 60,
+        sug_implement_bonus_pct: app_commands.Range[int, 10, 300] = 140,
+    ) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Only the bot owner can use this."),
+                ephemeral=True,
+            )
+            return
+        if weekly_cap <= 0 or daily_bug_limit <= 0 or daily_suggestion_limit <= 0:
+            await interaction.response.send_message(
+                embed=embeds.error_embed("weekly_cap and daily limits must be greater than 0."),
+                ephemeral=True,
+            )
+            return
+
+        before = await db.get_all_config()
+        computed = self._auto_calculate_rates(
+            weekly_cap=weekly_cap,
+            daily_bug_limit=daily_bug_limit,
+            daily_suggestion_limit=daily_suggestion_limit,
+            bug_weight_percent=bug_weight_percent,
+            bug_resolve_bonus_percent=bug_resolve_bonus_percent,
+            suggestion_implement_bonus_percent=sug_implement_bonus_pct,
+        )
+        await db.set_config("economy_mode", "auto")
+        for k, v in computed.items():
+            await db.set_config(k, str(v))
+        after = await db.get_all_config()
+
+        await interaction.response.defer(ephemeral=True)
+        result = await self._broadcast_rate_update(interaction.user, before, after)
+        summary = (
+            f"Auto economy applied.\n"
+            f"- bug_report_rate: ₱{computed['bug_report_rate']}\n"
+            f"- bug_resolve_bonus: ₱{computed['bug_resolve_bonus']}\n"
+            f"- suggestion_submit_rate: ₱{computed['suggestion_submit_rate']}\n"
+            f"- suggestion_implement_bonus: ₱{computed['suggestion_implement_bonus']}\n"
+            f"- weekly_cap: ₱{computed['weekly_cap']}\n"
+            f"- daily_bug_limit: {computed['daily_bug_limit']}\n"
+            f"- daily_suggestion_limit: {computed['daily_suggestion_limit']}\n\n"
+            f"Notified testers: {result['sent']} sent, {result['failed']} failed."
+        )
+        await interaction.followup.send(embed=embeds.success_embed(summary), ephemeral=True)
 
     @config_group.command(name="rates", description="Configure all rates/limits in one modal")
     async def config_rates(self, interaction: discord.Interaction) -> None:
