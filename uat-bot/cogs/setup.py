@@ -11,18 +11,30 @@ from database import db
 from database.db import DEFAULT_CONFIG
 from ui import embeds
 from ui.modals import (
-    ExistingChannelsModal,
-    ExistingRolesModal,
     FeaturesEditModal,
     MilestoneModal,
     RatesSetupModal,
 )
 from utils import config
 from utils.checks import is_owner
-from utils.parsing import parse_rates_block, parse_snowflake
+from utils.parsing import parse_rates_block
 from utils.logging import log_event
 
 setup_sessions: dict[int, dict[str, Any]] = {}
+ROLE_SEQUENCE = [
+    ("role_admin", "UAT Admin role"),
+    ("role_tester", "Tester role"),
+    ("role_senior_tester", "Senior Tester role"),
+]
+CHANNEL_SEQUENCE = [
+    ("channel_announcements", "uat-announcements"),
+    ("channel_register_here", "register-here"),
+    ("channel_bug_reports", "bug-reports"),
+    ("channel_suggestions", "suggestions"),
+    ("channel_payout_log", "payout-log"),
+    ("channel_bot_logs", "bot-logs"),
+    ("channel_guidelines", "tester-guidelines"),
+]
 
 
 def _session(uid: int) -> dict[str, Any]:
@@ -140,7 +152,14 @@ class Setup(commands.Cog):
             await db.set_config(k, v)
 
     async def prompt_existing_roles(self, interaction: discord.Interaction, uid: int) -> None:
-        await interaction.response.send_modal(ExistingRolesModalImpl(self, uid))
+        await interaction.response.send_message(
+            embed=embeds.confirmation_embed(
+                "Map Existing Roles",
+                "Select the role for **UAT Admin**.",
+            ),
+            view=ExistingRoleSelectView(self, uid, 0, {}),
+            ephemeral=True,
+        )
 
     async def create_channels(self, guild: discord.Guild, uid: int) -> None:
         sess = _session(uid)
@@ -206,7 +225,14 @@ class Setup(commands.Cog):
             await db.set_config(k, v)
 
     async def prompt_existing_channels(self, interaction: discord.Interaction, uid: int) -> None:
-        await interaction.response.send_modal(ExistingChannelsModalImpl(self, uid))
+        await interaction.response.send_message(
+            embed=embeds.confirmation_embed(
+                "Map Existing Channels",
+                "Select the channel for **uat-announcements**.",
+            ),
+            view=ExistingChannelSelectView(self, uid, 0, {}),
+            ephemeral=True,
+        )
 
     async def step3_rates(self, interaction: discord.Interaction, uid: int) -> None:
         await interaction.response.send_message(
@@ -235,7 +261,7 @@ class Setup(commands.Cog):
             ephemeral=True,
         )
 
-    async def build_summary_embed(self, uid: int) -> discord.Embed:
+    async def build_summary_pages(self, uid: int) -> list[discord.Embed]:
         sess = _session(uid)
         rate_keys = [
             "bug_report_rate",
@@ -246,19 +272,31 @@ class Setup(commands.Cog):
             "daily_bug_limit",
             "daily_suggestion_limit",
         ]
-        payload = {
-            "Roles": sess.get("roles", {}),
-            "Channels": sess.get("channels", {}),
-            "Rates": {k: sess["rates"].get(k) for k in rate_keys},
-            "Features": sess.get("features") or await config.get_feature_list(),
-        }
-        return embeds.setup_summary_embed(payload)
+        pages: list[discord.Embed] = []
+        sections = [
+            ("Roles", sess.get("roles", {})),
+            ("Channels", sess.get("channels", {})),
+            ("Rates", {k: sess["rates"].get(k) for k in rate_keys}),
+            ("Features", sess.get("features") or await config.get_feature_list()),
+            ("Milestones", sess.get("milestones") or ["None configured"]),
+        ]
+        total = len(sections)
+        for i, (name, value) in enumerate(sections, start=1):
+            emb = discord.Embed(
+                title=f"Setup summary ({i}/{total})",
+                description=f"Review **{name}** before confirming setup.",
+                color=embeds.EMBED_COLOR,
+            )
+            rendered = str(value) if not isinstance(value, list) else "\n".join(value)
+            emb.add_field(name=name, value=rendered[:1024] or "—", inline=False)
+            pages.append(emb)
+        return pages
 
     async def send_step6_followup(self, interaction: discord.Interaction, uid: int) -> None:
-        emb = await self.build_summary_embed(uid)
+        pages = await self.build_summary_pages(uid)
         await interaction.followup.send(
-            embed=emb,
-            view=ConfirmSetupView(self, uid),
+            embed=pages[0],
+            view=ConfirmSetupView(self, uid, pages),
             ephemeral=True,
         )
 
@@ -285,6 +323,13 @@ class Setup(commands.Cog):
             ephemeral=True,
         )
         await _safe_send_log(self.bot, "SETUP_COMPLETE", {"by": str(uid)})
+
+    async def cancel_setup(self, interaction: discord.Interaction, uid: int) -> None:
+        setup_sessions.pop(uid, None)
+        await interaction.response.edit_message(
+            embed=embeds.warning_embed("Setup cancelled.", "Run /setup when ready."),
+            view=None,
+        )
 
 
 class RoleStepView(discord.ui.View):
@@ -317,40 +362,161 @@ class RoleStepView(discord.ui.View):
     ) -> None:
         await self.cog.prompt_existing_roles(interaction, interaction.user.id)
 
-
-class ExistingRolesModalImpl(ExistingRolesModal):
-    def __init__(self, cog: Setup, uid: int):
-        super().__init__()
-        self.cog = cog
-        self.uid = uid
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        ga = parse_snowflake(str(self.admin_role.value))
-        gt = parse_snowflake(str(self.tester_role.value))
-        gs = parse_snowflake(str(self.senior_role.value))
-        if not ga or not gt or not gs:
-            await interaction.response.send_message(
-                embed=embeds.error_embed("Could not parse role IDs."),
-                ephemeral=True,
-            )
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary)
+    async def skip_step(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        # Skip by creating default roles so setup can continue safely.
+        if not interaction.guild:
             return
-        sess = _session(self.uid)
-        sess["roles"] = {
-            "role_admin": str(ga),
-            "role_tester": str(gt),
-            "role_senior_tester": str(gs),
-        }
-        for k, v in sess["roles"].items():
-            await db.set_config(k, v)
-        await interaction.response.send_message(
-            embed=embeds.success_embed("Roles saved."),
-            ephemeral=True,
+        uid = interaction.user.id
+        await self.cog.create_roles(interaction.guild, uid)
+        await interaction.response.edit_message(
+            embed=embeds.warning_embed(
+                "Roles step skipped.",
+                "Default UAT roles were created automatically.",
+            ),
+            view=None,
         )
         await interaction.followup.send(
             embed=embeds.confirmation_embed("Step 2 — Channels", "Create channels or map existing?"),
             view=ChannelStepView(self.cog),
             ephemeral=True,
         )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    async def cancel_step(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self.cog.cancel_setup(interaction, interaction.user.id)
+
+
+class ExistingRoleSelect(discord.ui.RoleSelect):
+    def __init__(self, parent: "ExistingRoleSelectView"):
+        key, label = ROLE_SEQUENCE[parent.index]
+        super().__init__(
+            placeholder=f"Select {label}",
+            min_values=1,
+            max_values=1,
+        )
+        self.parent_view = parent
+        self.key = key
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        self.parent_view.mapping[self.key] = str(self.values[0].id)
+        next_index = self.parent_view.index + 1
+        if next_index < len(ROLE_SEQUENCE):
+            _, next_label = ROLE_SEQUENCE[next_index]
+            await interaction.response.edit_message(
+                embed=embeds.confirmation_embed(
+                    "Map Existing Roles",
+                    f"Saved. Now select **{next_label}**.",
+                ),
+                view=ExistingRoleSelectView(
+                    self.parent_view.cog,
+                    self.parent_view.uid,
+                    next_index,
+                    self.parent_view.mapping,
+                ),
+            )
+            return
+        sess = _session(self.parent_view.uid)
+        sess["roles"] = dict(self.parent_view.mapping)
+        for k, v in sess["roles"].items():
+            await db.set_config(k, v)
+        await interaction.response.edit_message(embed=embeds.success_embed("Roles saved."), view=None)
+        await interaction.followup.send(
+            embed=embeds.confirmation_embed("Step 2 — Channels", "Create channels or map existing?"),
+            view=ChannelStepView(self.parent_view.cog),
+            ephemeral=True,
+        )
+
+
+class ExistingRoleSelectView(discord.ui.View):
+    def __init__(self, cog: Setup, uid: int, index: int, mapping: dict[str, str]):
+        super().__init__(timeout=180)
+        self.cog = cog
+        self.uid = uid
+        self.index = index
+        self.mapping = mapping
+        self.add_item(ExistingRoleSelect(self))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.uid:
+            await interaction.response.send_message("Only the setup owner can use this.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.index == 0:
+            await interaction.response.edit_message(
+                embed=embeds.confirmation_embed(
+                    "Step 1 — Roles",
+                    "Should I **create** UAT roles, or **map** existing roles?",
+                ),
+                view=RoleStepView(self.cog),
+            )
+            return
+        prev_index = self.index - 1
+        _, prev_label = ROLE_SEQUENCE[prev_index]
+        await interaction.response.edit_message(
+            embed=embeds.confirmation_embed(
+                "Map Existing Roles",
+                f"Go back: select **{prev_label}**.",
+            ),
+            view=ExistingRoleSelectView(self.cog, self.uid, prev_index, self.mapping),
+        )
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        key, _ = ROLE_SEQUENCE[self.index]
+        if key not in self.mapping:
+            await interaction.response.send_message(
+                embed=embeds.warning_embed("Please select a role first."),
+                ephemeral=True,
+            )
+            return
+        next_index = self.index + 1
+        if next_index < len(ROLE_SEQUENCE):
+            _, next_label = ROLE_SEQUENCE[next_index]
+            await interaction.response.edit_message(
+                embed=embeds.confirmation_embed(
+                    "Map Existing Roles",
+                    f"Now select **{next_label}**.",
+                ),
+                view=ExistingRoleSelectView(self.cog, self.uid, next_index, self.mapping),
+            )
+            return
+        sess = _session(self.uid)
+        sess["roles"] = dict(self.mapping)
+        for k, v in sess["roles"].items():
+            await db.set_config(k, v)
+        await interaction.response.edit_message(embed=embeds.success_embed("Roles saved."), view=None)
+        await interaction.followup.send(
+            embed=embeds.confirmation_embed("Step 2 — Channels", "Create channels or map existing?"),
+            view=ChannelStepView(self.cog),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary)
+    async def skip(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.guild:
+            return
+        await self.cog.create_roles(interaction.guild, self.uid)
+        await interaction.response.edit_message(
+            embed=embeds.warning_embed("Role mapping skipped.", "Default roles were created."),
+            view=None,
+        )
+        await interaction.followup.send(
+            embed=embeds.confirmation_embed("Step 2 — Channels", "Create channels or map existing?"),
+            view=ChannelStepView(self.cog),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self.cog.cancel_setup(interaction, self.uid)
 
 
 class ChannelStepView(discord.ui.View):
@@ -383,45 +549,138 @@ class ChannelStepView(discord.ui.View):
     ) -> None:
         await self.cog.prompt_existing_channels(interaction, interaction.user.id)
 
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary)
+    async def skip_step(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        if not interaction.guild:
+            return
+        uid = interaction.user.id
+        await interaction.response.defer(ephemeral=True)
+        await self.cog.create_channels(interaction.guild, uid)
+        await interaction.followup.send(
+            embed=embeds.warning_embed("Channel mapping skipped.", "Default channels were created."),
+            ephemeral=True,
+        )
+        await interaction.followup.send(
+            embed=embeds.confirmation_embed(
+                "Step 3 — Rates",
+                "Click **Edit rates** to open the modal (defaults in placeholder).",
+            ),
+            view=RatesStepView(self.cog, uid),
+            ephemeral=True,
+        )
 
-class ExistingChannelsModalImpl(ExistingChannelsModal):
-    def __init__(self, cog: Setup, uid: int):
-        super().__init__()
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    async def cancel_step(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self.cog.cancel_setup(interaction, interaction.user.id)
+
+
+class ExistingChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self, parent: "ExistingChannelSelectView"):
+        _, label = CHANNEL_SEQUENCE[parent.index]
+        super().__init__(
+            placeholder=f"Select #{label}",
+            channel_types=[discord.ChannelType.text],
+            min_values=1,
+            max_values=1,
+        )
+        self.parent_view = parent
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        key, _ = CHANNEL_SEQUENCE[self.parent_view.index]
+        self.parent_view.mapping[key] = str(self.values[0].id)
+        next_index = self.parent_view.index + 1
+        if next_index < len(CHANNEL_SEQUENCE):
+            _, next_label = CHANNEL_SEQUENCE[next_index]
+            await interaction.response.edit_message(
+                embed=embeds.confirmation_embed(
+                    "Map Existing Channels",
+                    f"Saved. Now select **{next_label}**.",
+                ),
+                view=ExistingChannelSelectView(
+                    self.parent_view.cog,
+                    self.parent_view.uid,
+                    next_index,
+                    self.parent_view.mapping,
+                ),
+            )
+            return
+        sess = _session(self.parent_view.uid)
+        sess["channels"] = dict(self.parent_view.mapping)
+        for kk, vv in sess["channels"].items():
+            await db.set_config(kk, vv)
+        await interaction.response.edit_message(embed=embeds.success_embed("Channels saved."), view=None)
+        await interaction.followup.send(
+            embed=embeds.confirmation_embed(
+                "Step 3 — Rates",
+                "Click **Edit rates** to open the modal.",
+            ),
+            view=RatesStepView(self.parent_view.cog, self.parent_view.uid),
+            ephemeral=True,
+        )
+
+
+class ExistingChannelSelectView(discord.ui.View):
+    def __init__(self, cog: Setup, uid: int, index: int, mapping: dict[str, str]):
+        super().__init__(timeout=180)
         self.cog = cog
         self.uid = uid
+        self.index = index
+        self.mapping = mapping
+        self.add_item(ExistingChannelSelect(self))
 
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        lines = [ln.strip() for ln in str(self.mapping.value).splitlines() if ln.strip()]
-        keys = [
-            "channel_announcements",
-            "channel_register_here",
-            "channel_bug_reports",
-            "channel_suggestions",
-            "channel_payout_log",
-            "channel_bot_logs",
-            "channel_guidelines",
-        ]
-        if len(lines) < 7:
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.uid:
+            await interaction.response.send_message("Only the setup owner can use this.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.index == 0:
+            await interaction.response.edit_message(
+                embed=embeds.confirmation_embed("Step 2 — Channels", "Create channels or map existing?"),
+                view=ChannelStepView(self.cog),
+            )
+            return
+        prev_index = self.index - 1
+        _, prev_label = CHANNEL_SEQUENCE[prev_index]
+        await interaction.response.edit_message(
+            embed=embeds.confirmation_embed(
+                "Map Existing Channels",
+                f"Go back: select **{prev_label}**.",
+            ),
+            view=ExistingChannelSelectView(self.cog, self.uid, prev_index, self.mapping),
+        )
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        key, _ = CHANNEL_SEQUENCE[self.index]
+        if key not in self.mapping:
             await interaction.response.send_message(
-                embed=embeds.error_embed("Provide exactly 7 channel IDs (one per line)."),
+                embed=embeds.warning_embed("Please select a channel first."),
                 ephemeral=True,
             )
             return
-        mapping: dict[str, str] = {}
-        for k, ln in zip(keys, lines[:7]):
-            sid = parse_snowflake(ln)
-            if not sid:
-                await interaction.response.send_message(
-                    embed=embeds.error_embed(f"Could not parse channel ID: {ln}"),
-                    ephemeral=True,
-                )
-                return
-            mapping[k] = str(sid)
+        next_index = self.index + 1
+        if next_index < len(CHANNEL_SEQUENCE):
+            _, next_label = CHANNEL_SEQUENCE[next_index]
+            await interaction.response.edit_message(
+                embed=embeds.confirmation_embed(
+                    "Map Existing Channels",
+                    f"Now select **{next_label}**.",
+                ),
+                view=ExistingChannelSelectView(self.cog, self.uid, next_index, self.mapping),
+            )
+            return
         sess = _session(self.uid)
-        sess["channels"] = mapping
-        for kk, vv in mapping.items():
+        sess["channels"] = dict(self.mapping)
+        for kk, vv in sess["channels"].items():
             await db.set_config(kk, vv)
-        await interaction.response.send_message(embed=embeds.success_embed("Channels saved."), ephemeral=True)
+        await interaction.response.edit_message(embed=embeds.success_embed("Channels saved."), view=None)
         await interaction.followup.send(
             embed=embeds.confirmation_embed(
                 "Step 3 — Rates",
@@ -430,6 +689,29 @@ class ExistingChannelsModalImpl(ExistingChannelsModal):
             view=RatesStepView(self.cog, self.uid),
             ephemeral=True,
         )
+
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary)
+    async def skip(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer(ephemeral=True)
+        await self.cog.create_channels(interaction.guild, self.uid)
+        await interaction.followup.send(
+            embed=embeds.warning_embed("Channel mapping skipped.", "Default channels were created."),
+            ephemeral=True,
+        )
+        await interaction.followup.send(
+            embed=embeds.confirmation_embed(
+                "Step 3 — Rates",
+                "Click **Edit rates** to open the modal.",
+            ),
+            view=RatesStepView(self.cog, self.uid),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self.cog.cancel_setup(interaction, self.uid)
 
 
 class RatesSetupModalImpl(RatesSetupModal):
@@ -499,6 +781,12 @@ class RatesStepView(discord.ui.View):
             ephemeral=True,
         )
 
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    async def cancel(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self.cog.cancel_setup(interaction, self.uid)
+
 
 class FeaturesEditModalImpl(FeaturesEditModal):
     def __init__(self, cog: Setup, uid: int):
@@ -551,6 +839,12 @@ class FeaturesStepView(discord.ui.View):
             ephemeral=True,
         )
 
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    async def cancel(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self.cog.cancel_setup(interaction, self.uid)
+
 
 class MilestoneModalImpl(MilestoneModal):
     def __init__(self, cog: Setup, uid: int):
@@ -594,6 +888,12 @@ class MilestoneStepView(discord.ui.View):
         await interaction.response.edit_message(content="Skipping milestones.", embed=None, view=None)
         await self.cog.send_step6_followup(interaction, uid)
 
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    async def cancel(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self.cog.cancel_setup(interaction, self.uid)
+
 
 class MilestoneAgainView(discord.ui.View):
     def __init__(self, cog: Setup, uid: int):
@@ -612,18 +912,40 @@ class MilestoneAgainView(discord.ui.View):
 
 
 class ConfirmSetupView(discord.ui.View):
-    def __init__(self, cog: Setup, uid: int):
+    def __init__(self, cog: Setup, uid: int, pages: list[discord.Embed]):
         super().__init__(timeout=300)
         self.cog = cog
         self.uid = uid
+        self.pages = pages
+        self.index = 0
 
-    @discord.ui.button(label="Confirm Setup", style=discord.ButtonStyle.success, emoji="✅")
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.uid:
+            await interaction.response.send_message("Only the setup owner can use this.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, row=0)
+    async def back(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        self.index = max(0, self.index - 1)
+        await interaction.response.edit_message(embed=self.pages[self.index], view=self)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, row=0)
+    async def next(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        self.index = min(len(self.pages) - 1, self.index + 1)
+        await interaction.response.edit_message(embed=self.pages[self.index], view=self)
+
+    @discord.ui.button(label="Confirm Setup", style=discord.ButtonStyle.success, emoji="✅", row=1)
     async def confirm(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         await self.cog.finalize_setup(interaction, self.uid)
 
-    @discord.ui.button(label="Start Over", style=discord.ButtonStyle.danger, emoji="🔄")
+    @discord.ui.button(label="Start Over", style=discord.ButtonStyle.danger, emoji="🔄", row=1)
     async def restart(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
@@ -639,6 +961,12 @@ class ConfirmSetupView(discord.ui.View):
             view=RoleStepView(self.cog),
             ephemeral=True,
         )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, row=1)
+    async def cancel(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self.cog.cancel_setup(interaction, self.uid)
 
 
 async def setup(bot: commands.Bot) -> None:

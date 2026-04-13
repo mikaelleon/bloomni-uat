@@ -86,13 +86,6 @@ class Suggestions(commands.Cog):
                 ephemeral=True,
             )
             return
-        rate = await config.get_rate("suggestion_submit_rate")
-        if not await check_weekly_cap(uid, ws, next_add=rate):
-            await interaction.response.send_message(
-                embed=embeds.error_embed("You've reached the weekly earnings cap."),
-                ephemeral=True,
-            )
-            return
         feats = await config.get_feature_list()
         await interaction.response.send_message(
             "Pick a feature, then describe your suggestion.",
@@ -110,14 +103,6 @@ class Suggestions(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         uid = str(interaction.user.id)
         today = today_pht()
-        ws = get_week_start(today)
-        rate = await config.get_rate("suggestion_submit_rate")
-        if not await check_weekly_cap(uid, ws, next_add=rate):
-            await interaction.followup.send(
-                embed=embeds.error_embed("Weekly cap reached."),
-                ephemeral=True,
-            )
-            return
         sid = await db.get_next_suggestion_id()
         submitted = now_pht()
         await db.create_suggestion(sid, uid, feature_tag, title, description, submitted)
@@ -132,15 +117,13 @@ class Suggestions(commands.Cog):
         assert row
         msg = await ch.send(embed=embeds.suggestion_embed(row, interaction.user))
         await db.update_suggestion_message_id(sid, str(msg.id))
-        await db.add_earnings(uid, ws, "suggestions_submitted", 1)
-        await db.add_earnings(uid, ws, "total_earned", rate)
         await db.increment_daily_count(uid, today, "suggestions_today")
         dm = discord.Embed(
             title=f"Suggestion {sid}",
             description=(
                 f"**Title:** {title}\n"
                 f"**Feature:** {feature_tag}\n"
-                f"+₱{rate} added to earnings."
+                "Submitted successfully and waiting for owner acknowledgement."
             ),
             color=embeds.EMBED_COLOR,
         )
@@ -174,9 +157,9 @@ class Suggestions(commands.Cog):
                 ephemeral=True,
             )
             return
-        if sug.get("status") != "pending":
+        if sug.get("status") not in {"acknowledged", "submitted"}:
             await interaction.response.send_message(
-                embed=embeds.error_embed("Suggestion is not pending."),
+                embed=embeds.error_embed("Suggestion must be submitted/acknowledged first."),
                 ephemeral=True,
             )
             return
@@ -249,6 +232,50 @@ class Suggestions(commands.Cog):
             ephemeral=True,
         )
 
+    @suggestion.command(name="acknowledge", description="Acknowledge a suggestion and credit submitter")
+    @app_commands.describe(suggestion_id="Suggestion ID e.g. SUG-001")
+    async def suggestion_acknowledge(self, interaction: discord.Interaction, suggestion_id: str) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(embed=embeds.error_embed("Only the bot owner can use this."), ephemeral=True)
+            return
+        sug = await db.get_suggestion(suggestion_id)
+        if not sug:
+            await interaction.response.send_message(embed=embeds.error_embed("Suggestion not found."), ephemeral=True)
+            return
+        if sug.get("status") != "submitted":
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Only submitted suggestions can be acknowledged."),
+                ephemeral=True,
+            )
+            return
+        submitter_id = sug["submitter_id"]
+        ws = get_week_start(today_pht())
+        rate = await config.get_rate("suggestion_submit_rate")
+        if not await check_weekly_cap(submitter_id, ws, next_add=rate):
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Cannot acknowledge: submitter already hit weekly cap."),
+                ephemeral=True,
+            )
+            return
+        await db.acknowledge_suggestion(sug["suggestion_id"], now_pht())
+        await db.add_earnings(submitter_id, ws, "suggestions_acknowledged", 1)
+        await db.add_earnings(submitter_id, ws, "total_earned", rate)
+        sch = await config.get_channel(self.bot, "channel_suggestions")
+        if sch and sug.get("message_id"):
+            try:
+                m = await sch.fetch_message(int(sug["message_id"]))
+                s2 = await db.get_suggestion(sug["suggestion_id"])
+                u = await self.bot.fetch_user(int(s2["submitter_id"]))
+                await m.edit(embed=embeds.suggestion_embed(s2, u))
+            except discord.HTTPException:
+                pass
+        try:
+            submitter = await self.bot.fetch_user(int(submitter_id))
+            await submitter.send(f"Your suggestion {sug['suggestion_id']} has been acknowledged! ₱{rate} added to your earnings.")
+        except discord.HTTPException:
+            pass
+        await interaction.response.send_message(embed=embeds.success_embed(f"{sug['suggestion_id']} acknowledged and credited."), ephemeral=True)
+
     @suggestion.command(name="dismiss", description="Dismiss a suggestion")
     @app_commands.describe(suggestion_id="Suggestion ID")
     async def suggestion_dismiss(self, interaction: discord.Interaction, suggestion_id: str) -> None:
@@ -259,7 +286,7 @@ class Suggestions(commands.Cog):
             )
             return
         sug = await db.get_suggestion(suggestion_id)
-        if not sug or sug.get("status") != "pending":
+        if not sug or sug.get("status") not in {"submitted", "acknowledged"}:
             await interaction.response.send_message(
                 embed=embeds.error_embed("Suggestion not found or not pending."),
                 ephemeral=True,
@@ -275,7 +302,6 @@ class Suggestions(commands.Cog):
         if not sug:
             await interaction.followup.send(embed=embeds.error_embed("Not found."), ephemeral=True)
             return
-        rate = await config.get_rate("suggestion_submit_rate")
         await db.update_suggestion_status(
             suggestion_id, "dismissed", dismiss_reason=reason or None, actioned_at=now_pht()
         )
@@ -292,8 +318,7 @@ class Suggestions(commands.Cog):
             u = await self.bot.fetch_user(int(sug["submitter_id"]))
             r = reason.strip() if reason else "No reason provided"
             await u.send(
-                f"Your suggestion {suggestion_id} has been dismissed. Reason: {r}. "
-                f"The ₱{rate} submission pay is yours to keep!"
+                f"Your suggestion {suggestion_id} has been dismissed. Reason: {r}."
             )
         except discord.HTTPException:
             pass
@@ -308,7 +333,8 @@ class Suggestions(commands.Cog):
     @app_commands.describe(status="Filter")
     @app_commands.choices(
         status=[
-            app_commands.Choice(name="pending", value="pending"),
+            app_commands.Choice(name="submitted", value="submitted"),
+            app_commands.Choice(name="acknowledged", value="acknowledged"),
             app_commands.Choice(name="implemented", value="implemented"),
             app_commands.Choice(name="dismissed", value="dismissed"),
             app_commands.Choice(name="all", value="all"),

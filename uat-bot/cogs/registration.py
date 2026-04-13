@@ -107,7 +107,23 @@ class Registration(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
         uid = str(interaction.user.id)
-        enc = encrypt_gcash(gcash_raw.strip())
+        try:
+            enc = encrypt_gcash(gcash_raw.strip())
+        except RuntimeError:
+            await interaction.followup.send(
+                embed=embeds.warning_embed(
+                    "Registration is temporarily unavailable because bot encryption is not configured.",
+                    "Please ask the owner to set FERNET_KEY in uat-bot/.env and restart the bot.",
+                ),
+                ephemeral=True,
+            )
+            await log_event(
+                self.bot,
+                "REGISTRATION_BLOCKED",
+                {"user_id": uid, "reason": "missing_fernet_key"},
+                level="WARNING",
+            )
+            return
         await db.create_tester(uid, display_name, enc, now_pht())
         if interaction.guild:
             role = await config.get_role(interaction.guild, "role_tester")
@@ -139,7 +155,10 @@ class Registration(commands.Cog):
         except discord.HTTPException:
             pass
         await interaction.followup.send(
-            embed=embeds.success_embed("You're registered! Check your DMs."),
+            embed=embeds.confirmation_embed(
+                "Registration Complete",
+                "You're registered successfully. Check your DMs for your welcome details.",
+            ),
             ephemeral=True,
         )
         await log_event(
@@ -171,7 +190,23 @@ class Registration(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
         uid = str(interaction.user.id)
-        enc = encrypt_gcash(gcash_raw.strip())
+        try:
+            enc = encrypt_gcash(gcash_raw.strip())
+        except RuntimeError:
+            await interaction.followup.send(
+                embed=embeds.warning_embed(
+                    "GCash update is temporarily unavailable because bot encryption is not configured.",
+                    "Please ask the owner to set FERNET_KEY in uat-bot/.env and restart the bot.",
+                ),
+                ephemeral=True,
+            )
+            await log_event(
+                self.bot,
+                "GCASH_UPDATE_BLOCKED",
+                {"user_id": uid, "reason": "missing_fernet_key"},
+                level="WARNING",
+            )
+            return
         await db.update_tester_gcash(uid, enc)
         masked = mask_gcash(gcash_raw.strip())
         try:

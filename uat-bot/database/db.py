@@ -35,6 +35,14 @@ DEFAULT_CONFIG = {
 }
 
 
+async def _safe_alter(sql: str) -> None:
+    try:
+        await _db().execute(sql)
+    except aiosqlite.OperationalError:
+        # Column already exists or migration not applicable.
+        pass
+
+
 async def init_db() -> None:
     global _conn
     if _conn is not None:
@@ -44,6 +52,13 @@ async def init_db() -> None:
     schema_path = Path(__file__).resolve().parent / "schema.sql"
     with open(schema_path, encoding="utf-8") as f:
         await _conn.executescript(f.read())
+    # Lightweight migrations for older local DBs.
+    await _safe_alter("ALTER TABLE earnings ADD COLUMN bugs_validated INTEGER NOT NULL DEFAULT 0")
+    await _safe_alter("ALTER TABLE earnings ADD COLUMN suggestions_acknowledged INTEGER NOT NULL DEFAULT 0")
+    await _safe_alter("ALTER TABLE bugs ADD COLUMN validated_at DATETIME")
+    await _safe_alter("ALTER TABLE suggestions ADD COLUMN acknowledged_at DATETIME")
+    await _conn.execute("UPDATE bugs SET status = 'submitted' WHERE status = 'open'")
+    await _conn.execute("UPDATE suggestions SET status = 'submitted' WHERE status = 'pending'")
     await _conn.commit()
     cur = await _conn.execute("SELECT COUNT(*) FROM config")
     row = await cur.fetchone()
@@ -173,7 +188,7 @@ async def create_bug(
         """INSERT INTO bugs (
             bug_id, reporter_id, title, steps, actual, expected, severity,
             status, submitted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)""",
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', ?)""",
         (
             bug_id,
             reporter_id,
@@ -211,6 +226,32 @@ async def update_bug_status(bug_id: str, status: str, resolved_at: datetime | No
     await _db().commit()
 
 
+async def update_bug_status_extended(
+    bug_id: str,
+    status: str,
+    *,
+    resolved_at: datetime | None = None,
+    validated_at: datetime | None = None,
+    duplicate_of: str | None = None,
+) -> None:
+    await _db().execute(
+        """UPDATE bugs
+           SET status = ?,
+               resolved_at = ?,
+               validated_at = ?,
+               duplicate_of = COALESCE(?, duplicate_of)
+           WHERE bug_id = ?""",
+        (
+            status,
+            resolved_at.isoformat() if resolved_at else None,
+            validated_at.isoformat() if validated_at else None,
+            duplicate_of,
+            bug_id,
+        ),
+    )
+    await _db().commit()
+
+
 async def update_bug_thread(bug_id: str, thread_id: str) -> None:
     await _db().execute("UPDATE bugs SET thread_id = ? WHERE bug_id = ?", (thread_id, bug_id))
     await _db().commit()
@@ -234,7 +275,7 @@ async def get_bugs_by_status(status: str) -> list[dict]:
 
 async def get_all_open_bug_titles() -> list[str]:
     cur = await _db().execute(
-        "SELECT title FROM bugs WHERE status = 'open'"
+        "SELECT title FROM bugs WHERE status IN ('submitted', 'validated')"
     )
     rows = await cur.fetchall()
     return [r["title"] for r in rows]
@@ -267,7 +308,7 @@ async def create_suggestion(
         """INSERT INTO suggestions (
             suggestion_id, submitter_id, feature_tag, title, description,
             status, submitted_at
-        ) VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
+        ) VALUES (?, ?, ?, ?, ?, 'submitted', ?)""",
         (
             suggestion_id,
             submitter_id,
@@ -308,6 +349,16 @@ async def update_suggestion_status(
             actioned_at.isoformat() if actioned_at else None,
             suggestion_id,
         ),
+    )
+    await _db().commit()
+
+
+async def acknowledge_suggestion(suggestion_id: str, actioned_at: datetime) -> None:
+    await _db().execute(
+        """UPDATE suggestions
+           SET status = 'acknowledged', acknowledged_at = ?
+           WHERE suggestion_id = ?""",
+        (actioned_at.isoformat(), suggestion_id),
     )
     await _db().commit()
 
@@ -360,8 +411,10 @@ async def get_or_create_earnings(user_id: str, week_start: date) -> dict:
 _ALLOWED_EARNINGS_FIELDS = frozenset(
     {
         "bugs_submitted",
+        "bugs_validated",
         "bugs_resolved",
         "suggestions_submitted",
+        "suggestions_acknowledged",
         "suggestions_implemented",
         "loyalty_bonus",
         "total_earned",
@@ -438,6 +491,11 @@ async def get_tester_all_time_stats(user_id: str) -> dict:
     )
     bugs_sub = (await cur.fetchone())["c"]
     cur = await _db().execute(
+        "SELECT COUNT(*) AS c FROM bugs WHERE reporter_id = ? AND status IN ('validated', 'resolved')",
+        (user_id,),
+    )
+    bugs_val = (await cur.fetchone())["c"]
+    cur = await _db().execute(
         "SELECT COUNT(*) AS c FROM bugs WHERE reporter_id = ? AND status = 'resolved'",
         (user_id,),
     )
@@ -446,6 +504,11 @@ async def get_tester_all_time_stats(user_id: str) -> dict:
         "SELECT COUNT(*) AS c FROM suggestions WHERE submitter_id = ?", (user_id,)
     )
     sug_sub = (await cur.fetchone())["c"]
+    cur = await _db().execute(
+        "SELECT COUNT(*) AS c FROM suggestions WHERE submitter_id = ? AND status IN ('acknowledged', 'implemented')",
+        (user_id,),
+    )
+    sug_ack = (await cur.fetchone())["c"]
     cur = await _db().execute(
         "SELECT COUNT(*) AS c FROM suggestions WHERE submitter_id = ? AND status = 'implemented'",
         (user_id,),
@@ -458,11 +521,65 @@ async def get_tester_all_time_stats(user_id: str) -> dict:
     total_earned = int((await cur.fetchone())["s"])
     return {
         "bugs_submitted": bugs_sub,
+        "bugs_validated": bugs_val,
         "bugs_resolved": bugs_res,
         "suggestions_submitted": sug_sub,
+        "suggestions_acknowledged": sug_ack,
         "suggestions_implemented": sug_imp,
         "total_earned_all_time": total_earned,
     }
+
+
+async def get_user_bugs(user_id: str, status: str = "all") -> list[dict]:
+    if status == "all":
+        cur = await _db().execute(
+            "SELECT * FROM bugs WHERE reporter_id = ? ORDER BY submitted_at DESC",
+            (user_id,),
+        )
+    else:
+        cur = await _db().execute(
+            "SELECT * FROM bugs WHERE reporter_id = ? AND status = ? ORDER BY submitted_at DESC",
+            (user_id, status),
+        )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_user_suggestions(user_id: str, status: str = "all") -> list[dict]:
+    if status == "all":
+        cur = await _db().execute(
+            "SELECT * FROM suggestions WHERE submitter_id = ? ORDER BY submitted_at DESC",
+            (user_id,),
+        )
+    else:
+        cur = await _db().execute(
+            "SELECT * FROM suggestions WHERE submitter_id = ? AND status = ? ORDER BY submitted_at DESC",
+            (user_id, status),
+        )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_earnings_history(user_id: str, limit: int = 12) -> list[dict]:
+    cur = await _db().execute(
+        "SELECT * FROM earnings WHERE user_id = ? ORDER BY week_start DESC LIMIT ?",
+        (user_id, limit),
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_weekly_leaderboard(week_start: date, limit: int = 10) -> list[dict]:
+    cur = await _db().execute(
+        """SELECT user_id, total_earned
+           FROM earnings
+           WHERE week_start = ?
+           ORDER BY total_earned DESC
+           LIMIT ?""",
+        (week_start.isoformat(), limit),
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 # --- Milestones ---

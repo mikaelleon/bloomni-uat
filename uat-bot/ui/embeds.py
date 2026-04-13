@@ -92,9 +92,11 @@ def _severity_label(sev: str) -> str:
 
 
 def bug_report_embed(bug: dict, reporter: discord.User) -> discord.Embed:
-    status = bug.get("status", "open")
+    status = bug.get("status", "submitted")
     st_label = {
-        "open": "🟡 Open",
+        "submitted": "🟡 Submitted",
+        "validated": "🔵 Validated",
+        "rejected": "❌ Rejected",
         "resolved": "✅ Resolved",
         "duplicate": "🔁 Duplicate",
     }.get(status, status)
@@ -116,9 +118,10 @@ def bug_report_embed(bug: dict, reporter: discord.User) -> discord.Embed:
 
 
 def suggestion_embed(suggestion: dict, submitter: discord.User) -> discord.Embed:
-    status = suggestion.get("status", "pending")
+    status = suggestion.get("status", "submitted")
     st_label = {
-        "pending": "🟡 Pending",
+        "submitted": "🟡 Submitted",
+        "acknowledged": "🔵 Acknowledged",
         "implemented": "✅ Implemented",
         "dismissed": "❌ Dismissed",
     }.get(status, status)
@@ -143,12 +146,14 @@ def earnings_embed_detailed(
     display_name: str,
     week_label: str,
     bugs_submitted: int,
+    bugs_validated: int,
     bugs_resolved: int,
     suggestions_submitted: int,
+    suggestions_acknowledged: int,
     suggestions_implemented: int,
-    earn_bug_sub: int,
+    earn_bug_val: int,
     earn_bug_res: int,
-    earn_sug_sub: int,
+    earn_sug_ack: int,
     earn_sug_imp: int,
     total: int,
     cap: int,
@@ -158,9 +163,11 @@ def earnings_embed_detailed(
         title=f"📊 Weekly earnings — {display_name}",
         description=f"**Week:** {week_label}",
     )
-    e.add_field(name="Bugs reported", value=f"{bugs_submitted} → +₱{earn_bug_sub}", inline=False)
+    e.add_field(name="Bugs submitted (pending)", value=f"{bugs_submitted}", inline=False)
+    e.add_field(name="Bugs validated", value=f"{bugs_validated} → +₱{earn_bug_val}", inline=False)
     e.add_field(name="Bugs resolved (bonus)", value=f"{bugs_resolved} → +₱{earn_bug_res}", inline=False)
-    e.add_field(name="Suggestions submitted", value=f"{suggestions_submitted} → +₱{earn_sug_sub}", inline=False)
+    e.add_field(name="Suggestions submitted (pending)", value=f"{max(0, suggestions_submitted - suggestions_acknowledged)}", inline=False)
+    e.add_field(name="Suggestions acknowledged", value=f"{suggestions_acknowledged} → +₱{earn_sug_ack}", inline=False)
     e.add_field(name="Suggestions implemented", value=f"{suggestions_implemented} → +₱{earn_sug_imp}", inline=False)
     e.add_field(name="Total this week", value=f"₱{total}", inline=True)
     e.add_field(name="Cap remaining", value=f"₱{max(0, cap - total)} / ₱{cap}", inline=True)

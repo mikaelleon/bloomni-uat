@@ -75,15 +75,7 @@ class RatesSetupModal(discord.ui.Modal, title="Edit Rates"):
     rates_text = discord.ui.TextInput(
         label="Rates (one per line: key: value)",
         style=discord.TextStyle.paragraph,
-        placeholder=(
-            "bug_report_rate: 15\n"
-            "bug_resolve_bonus: 10\n"
-            "suggestion_submit_rate: 10\n"
-            "suggestion_implement_bonus: 15\n"
-            "weekly_cap: 250\n"
-            "daily_bug_limit: 3\n"
-            "daily_suggestion_limit: 2"
-        ),
+        placeholder="Use key:value lines for all 7 rate keys",
         required=True,
         max_length=1000,
     )

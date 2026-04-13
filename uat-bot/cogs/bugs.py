@@ -144,15 +144,6 @@ class Bugs(commands.Cog):
                 ephemeral=True,
             )
             return
-        rate = await config.get_rate("bug_report_rate")
-        if not await check_weekly_cap(uid, ws, next_add=rate):
-            await interaction.response.send_message(
-                embed=embeds.error_embed(
-                    "You've reached the weekly earnings cap (₱250). See you next week!"
-                ),
-                ephemeral=True,
-            )
-            return
         await interaction.response.send_message(
             "Choose severity, then fill out the bug form.",
             view=SeverityBugView(self),
@@ -194,14 +185,6 @@ class Bugs(commands.Cog):
             await interaction.response.defer(ephemeral=True)
         uid = str(interaction.user.id)
         today = today_pht()
-        ws = get_week_start(today)
-        rate = await config.get_rate("bug_report_rate")
-        if not await check_weekly_cap(uid, ws, next_add=rate):
-            await interaction.followup.send(
-                embed=embeds.error_embed("Weekly cap reached."),
-                ephemeral=True,
-            )
-            return
         bug_id = await db.get_next_bug_id()
         submitted = now_pht()
         await db.create_bug(
@@ -234,8 +217,6 @@ class Bugs(commands.Cog):
             "Screenshots, screen recordings, or any other files that help reproduce this bug. "
             "This thread is also where any discussion about this bug happens."
         )
-        await db.add_earnings(uid, ws, "bugs_submitted", 1)
-        await db.add_earnings(uid, ws, "total_earned", rate)
         await db.increment_daily_count(uid, today, "bugs_today")
         jump = thread.jump_url
         dm = discord.Embed(
@@ -244,7 +225,7 @@ class Bugs(commands.Cog):
                 f"**Title:** {payload['title']}\n"
                 f"**Severity:** {payload['severity']}\n"
                 f"**Thread:** {jump}\n"
-                f"+₱{rate} added to your weekly earnings."
+                "Submitted successfully and waiting for owner validation."
             ),
             color=embeds.EMBED_COLOR,
         )
@@ -278,9 +259,9 @@ class Bugs(commands.Cog):
                 ephemeral=True,
             )
             return
-        if bug.get("status") != "open":
+        if bug.get("status") != "validated":
             await interaction.response.send_message(
-                embed=embeds.error_embed("This bug is already resolved."),
+                embed=embeds.error_embed("Bug must be validated before it can be resolved."),
                 ephemeral=True,
             )
             return
@@ -358,11 +339,91 @@ class Bugs(commands.Cog):
             ephemeral=True,
         )
 
+    @bugs.command(name="validate", description="Validate a submitted bug and credit reporter")
+    @app_commands.describe(bug_id="Bug ID e.g. BUG-001")
+    async def bug_validate(self, interaction: discord.Interaction, bug_id: str) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(embed=embeds.error_embed("Only the bot owner can use this."), ephemeral=True)
+            return
+        bug = await db.get_bug(bug_id)
+        if not bug:
+            await interaction.response.send_message(embed=embeds.error_embed("Bug ID not found."), ephemeral=True)
+            return
+        if bug.get("status") != "submitted":
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Only submitted bugs can be validated."),
+                ephemeral=True,
+            )
+            return
+        reporter_id = bug["reporter_id"]
+        ws = get_week_start(today_pht())
+        rate = await config.get_rate("bug_report_rate")
+        if not await check_weekly_cap(reporter_id, ws, next_add=rate):
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Cannot validate: reporter already hit weekly cap."),
+                ephemeral=True,
+            )
+            return
+        await db.update_bug_status_extended(bug["bug_id"], "validated", validated_at=now_pht())
+        await db.add_earnings(reporter_id, ws, "bugs_validated", 1)
+        await db.add_earnings(reporter_id, ws, "total_earned", rate)
+        br_ch = await config.get_channel(self.bot, "channel_bug_reports")
+        if br_ch and bug.get("message_id"):
+            try:
+                m = await br_ch.fetch_message(int(bug["message_id"]))
+                b2 = await db.get_bug(bug["bug_id"])
+                rep = await self.bot.fetch_user(int(b2["reporter_id"]))
+                await m.edit(embed=embeds.bug_report_embed(b2, rep))
+            except discord.HTTPException:
+                pass
+        try:
+            reporter = await self.bot.fetch_user(int(reporter_id))
+            await reporter.send(f"Your bug {bug['bug_id']} has been validated! ₱{rate} added to your earnings.")
+        except discord.HTTPException:
+            pass
+        await interaction.response.send_message(embed=embeds.success_embed(f"{bug['bug_id']} validated and credited."), ephemeral=True)
+
+    @bugs.command(name="reject", description="Reject an invalid bug")
+    @app_commands.describe(bug_id="Bug ID e.g. BUG-001", reason="Reason for rejection")
+    async def bug_reject(self, interaction: discord.Interaction, bug_id: str, reason: str | None = None) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(embed=embeds.error_embed("Only the bot owner can use this."), ephemeral=True)
+            return
+        bug = await db.get_bug(bug_id)
+        if not bug:
+            await interaction.response.send_message(embed=embeds.error_embed("Bug ID not found."), ephemeral=True)
+            return
+        if bug.get("status") not in {"submitted", "validated"}:
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Only submitted/validated bugs can be rejected."),
+                ephemeral=True,
+            )
+            return
+        await db.update_bug_status_extended(bug["bug_id"], "rejected")
+        br_ch = await config.get_channel(self.bot, "channel_bug_reports")
+        if br_ch and bug.get("message_id"):
+            try:
+                m = await br_ch.fetch_message(int(bug["message_id"]))
+                b2 = await db.get_bug(bug["bug_id"])
+                rep = await self.bot.fetch_user(int(b2["reporter_id"]))
+                await m.edit(embed=embeds.bug_report_embed(b2, rep))
+            except discord.HTTPException:
+                pass
+        try:
+            reporter = await self.bot.fetch_user(int(bug["reporter_id"]))
+            why = reason.strip() if reason else "No reason provided."
+            await reporter.send(f"Your bug {bug['bug_id']} was rejected. Reason: {why}")
+        except discord.HTTPException:
+            pass
+        await interaction.response.send_message(embed=embeds.success_embed(f"{bug['bug_id']} rejected."), ephemeral=True)
+
     @bugs.command(name="list", description="List bugs")
     @app_commands.describe(status="Filter by status")
     @app_commands.choices(
         status=[
-            app_commands.Choice(name="open", value="open"),
+            app_commands.Choice(name="submitted", value="submitted"),
+            app_commands.Choice(name="validated", value="validated"),
+            app_commands.Choice(name="rejected", value="rejected"),
             app_commands.Choice(name="resolved", value="resolved"),
             app_commands.Choice(name="duplicate", value="duplicate"),
             app_commands.Choice(name="all", value="all"),
@@ -455,7 +516,7 @@ class Bugs(commands.Cog):
         self, interaction: discord.Interaction, bug: dict, reason: str
     ) -> None:
         await interaction.response.defer(ephemeral=True)
-        await db.update_bug_status(bug["bug_id"], "open", resolved_at=None)
+        await db.update_bug_status(bug["bug_id"], "validated", resolved_at=None)
         br_ch = await config.get_channel(self.bot, "channel_bug_reports")
         if br_ch and bug.get("message_id"):
             try:
