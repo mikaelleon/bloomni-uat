@@ -13,6 +13,7 @@ from ui.modals import (
     ApplicationRejectModal,
     RegistrationContextModal,
     RegistrationIdentityModal,
+    RatesSetupModal,
     UpdateGCashModal,
 )
 from ui.views import DMPagedGuideView, PaginationView
@@ -21,6 +22,7 @@ from utils.checks import is_active_tester, is_admin, is_owner
 from utils.crypto import encrypt_gcash, mask_gcash
 from utils.time_utils import get_week_start, now_pht, today_pht
 from utils.logging import log_event
+from utils.parsing import parse_rates_block
 
 
 GCASH_RE = re.compile(r"^09\d{9}$")
@@ -82,6 +84,44 @@ class ApplicationRejectModalImpl(ApplicationRejectModal):
         await self.cog.reject_application(
             interaction, self.application_id, str(self.reason.value or "").strip()
         )
+
+
+class ConfigRatesModalImpl(RatesSetupModal):
+    def __init__(self, cog: "Registration"):
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        parsed = parse_rates_block(str(self.rates_text.value))
+        if not parsed:
+            await interaction.response.send_message(
+                embed=embeds.error_embed(
+                    "Invalid rates block. Use one `key: value` per line for all 7 rate/limit keys."
+                ),
+                ephemeral=True,
+            )
+            return
+
+        before = await db.get_all_config()
+        for k, v in parsed.items():
+            await db.set_config(k, str(v))
+        after = await db.get_all_config()
+        changed = any(str(before.get(k, "")) != str(after.get(k, "")) for k in self.cog._rate_keys)
+
+        await interaction.response.defer(ephemeral=True)
+        if changed:
+            result = await self.cog._broadcast_rate_update(interaction.user, before, after)
+            await interaction.followup.send(
+                embed=embeds.success_embed(
+                    f"Rates updated in one batch. Notified testers: {result['sent']} sent, {result['failed']} failed."
+                ),
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(
+                embed=embeds.success_embed("No rate changes detected."),
+                ephemeral=True,
+            )
 
 
 class CommitmentView(discord.ui.View):
@@ -734,6 +774,16 @@ class Registration(commands.Cog):
             embed=embeds.success_embed(f"Updated `{key}`."),
             ephemeral=True,
         )
+
+    @config_group.command(name="rates", description="Configure all rates/limits in one modal")
+    async def config_rates(self, interaction: discord.Interaction) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(
+                embed=embeds.error_embed("Only the bot owner can use this."),
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(ConfigRatesModalImpl(self))
 
     tester = app_commands.Group(name="tester", description="Tester management")
 
