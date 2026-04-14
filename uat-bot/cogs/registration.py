@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
@@ -451,6 +451,30 @@ class Registration(commands.Cog):
         await db.delete_bugs_by_reporter(user_id)
         await db.renumber_bug_ids()
         return len(rows)
+
+    async def _purge_bot_dms_for_user(self, user: discord.abc.User) -> tuple[int, int]:
+        """Delete bot-authored DM messages for one user. Returns (deleted, failed)."""
+        deleted = 0
+        failed = 0
+        if not self.bot.user:
+            return (0, 0)
+        try:
+            dm = user.dm_channel or await user.create_dm()
+        except discord.HTTPException:
+            return (0, 1)
+
+        try:
+            async for msg in dm.history(limit=None):
+                if msg.author.id != self.bot.user.id:
+                    continue
+                try:
+                    await msg.delete()
+                    deleted += 1
+                except discord.HTTPException:
+                    failed += 1
+        except discord.HTTPException:
+            failed += 1
+        return (deleted, failed)
 
     @app_commands.command(name="register", description="Register as a UAT tester")
     @app_commands.describe(invite_code="Optional invite code (required only if owner enables it)")
@@ -1176,6 +1200,80 @@ class Registration(commands.Cog):
         await interaction.followup.send(
             embed=embeds.success_embed(
                 f"Unregistered {tester.get('display_name', user.display_name)}. Removed {removed} bug ticket(s) and renumbered remaining bug IDs."
+            ),
+            ephemeral=True,
+        )
+
+    @tester.command(name="purge-dms", description="Delete bot DM messages for one user")
+    @app_commands.describe(user="User whose bot DMs should be deleted")
+    async def tester_purge_dms(self, interaction: discord.Interaction, user: discord.User) -> None:
+        await interaction.response.defer(ephemeral=True)
+        if not await is_owner(interaction):
+            await interaction.followup.send(
+                embed=embeds.error_embed("Only the bot owner can use this."),
+                ephemeral=True,
+            )
+            return
+        deleted, failed = await self._purge_bot_dms_for_user(user)
+        await log_event(
+            self.bot,
+            "DM_PURGE_SINGLE",
+            {
+                "target_user_id": str(user.id),
+                "by": str(interaction.user.id),
+                "deleted": deleted,
+                "failed": failed,
+            },
+        )
+        await interaction.followup.send(
+            embed=embeds.success_embed(
+                f"DM purge complete for {user.mention}. Deleted: {deleted}. Failed: {failed}."
+            ),
+            ephemeral=True,
+        )
+
+    @tester.command(name="purge-dms-all", description="Delete bot DM messages for all server users")
+    async def tester_purge_dms_all(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        if not await is_owner(interaction):
+            await interaction.followup.send(
+                embed=embeds.error_embed("Only the bot owner can use this."),
+                ephemeral=True,
+            )
+            return
+        if not interaction.guild:
+            await interaction.followup.send(
+                embed=embeds.error_embed("This command can only run in a server."),
+                ephemeral=True,
+            )
+            return
+
+        total_deleted = 0
+        total_failed = 0
+        users_scanned = 0
+        for member in interaction.guild.members:
+            if member.bot:
+                continue
+            users_scanned += 1
+            deleted, failed = await self._purge_bot_dms_for_user(member)
+            total_deleted += deleted
+            total_failed += failed
+
+        await log_event(
+            self.bot,
+            "DM_PURGE_ALL",
+            {
+                "guild_id": str(interaction.guild.id),
+                "by": str(interaction.user.id),
+                "users_scanned": users_scanned,
+                "deleted": total_deleted,
+                "failed": total_failed,
+            },
+        )
+        await interaction.followup.send(
+            embed=embeds.success_embed(
+                f"Global DM purge complete. Users scanned: {users_scanned}. "
+                f"Deleted: {total_deleted}. Failed: {total_failed}."
             ),
             ephemeral=True,
         )
