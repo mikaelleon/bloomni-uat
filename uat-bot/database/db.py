@@ -29,6 +29,8 @@ DEFAULT_CONFIG = {
     "channel_register_here": "",
     "channel_applications": "",
     "channel_guidelines": "",
+    "channel_changes_announcements": "",
+    "changes_announce_enabled": "false",
     "role_tester": "",
     "role_admin": "",
     "role_senior_tester": "",

@@ -1,5 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import os
 import re
 from datetime import datetime, timedelta
 
@@ -22,6 +23,7 @@ from utils.checks import is_active_tester, is_admin, is_owner
 from utils.crypto import encrypt_gcash, mask_gcash
 from utils.time_utils import get_week_start, now_pht, today_pht
 from utils.logging import log_event
+from utils.changes_http import build_github_push_embed
 from utils.parsing import parse_rates_block
 
 
@@ -764,6 +766,114 @@ class Registration(commands.Cog):
         )
 
     config_group = app_commands.Group(name="config", description="Owner configuration")
+    changes_subgroup = app_commands.Group(
+        name="changes",
+        description="Announce Git pushes in a channel (GitHub webhook)",
+        parent=config_group,
+    )
+
+    @changes_subgroup.command(name="channel", description="Channel where push announcements are posted")
+    @app_commands.describe(channel="Omit this option to clear the configured channel")
+    async def config_changes_channel(
+        self, interaction: discord.Interaction, channel: discord.TextChannel | None = None
+    ) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(embed=embeds.error_embed("Only the bot owner can use this."), ephemeral=True)
+            return
+        if channel is None:
+            await db.set_config("channel_changes_announcements", "")
+            await interaction.response.send_message(
+                embed=embeds.success_embed("Changes announcement channel cleared."),
+                ephemeral=True,
+            )
+            return
+        await db.set_config("channel_changes_announcements", str(channel.id))
+        await interaction.response.send_message(
+            embed=embeds.success_embed(f"Changes will be announced in {channel.mention} when the webhook receives a push."),
+            ephemeral=True,
+        )
+
+    @changes_subgroup.command(name="enabled", description="Turn Git push announcements on or off")
+    @app_commands.describe(enabled="Post to the configured channel when pushes are received")
+    async def config_changes_enabled(self, interaction: discord.Interaction, enabled: bool) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(embed=embeds.error_embed("Only the bot owner can use this."), ephemeral=True)
+            return
+        await db.set_config("changes_announce_enabled", "true" if enabled else "false")
+        await interaction.response.send_message(
+            embed=embeds.success_embed(f"Push announcements: **{'on' if enabled else 'off'}**."),
+            ephemeral=True,
+        )
+
+    @changes_subgroup.command(name="status", description="Show changes-announcement settings and webhook hints")
+    async def config_changes_status(self, interaction: discord.Interaction) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(embed=embeds.error_embed("Only the bot owner can use this."), ephemeral=True)
+            return
+        cid = (await db.get_config("channel_changes_announcements")).strip()
+        on = (await db.get_config("changes_announce_enabled")).strip().lower() == "true"
+        http_on = os.getenv("CHANGELOG_HTTP_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+        port = os.getenv("CHANGELOG_HTTP_PORT", "8765").strip()
+        secret_set = bool(os.getenv("GITHUB_WEBHOOK_SECRET", "").strip())
+        ch_line = f"<#{cid}>" if cid.isdigit() else "*(not set — use `/config changes channel`)*"
+        lines = [
+            f"**Announcements enabled:** {'yes' if on else 'no'}",
+            f"**Target channel:** {ch_line}",
+            f"**HTTP listener:** {'running (if cog loaded)' if http_on else 'disabled via env'}",
+            f"**Port:** `{port}` (CHANGELOG_HTTP_PORT)",
+            f"**Webhook secret:** {'set in .env' if secret_set else '⚠ not set — add GITHUB_WEBHOOK_SECRET'}",
+            "",
+            "**GitHub webhook URL:** `http://YOUR_PUBLIC_HOST:" + port + "/webhooks/github`",
+            "Use **ngrok**, a VPS, or your host’s reverse proxy so GitHub can reach the bot. Event: **push**, Content type: **application/json**.",
+        ]
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="Repository push announcements",
+                description="\n".join(lines),
+                color=embeds.EMBED_COLOR,
+            ),
+            ephemeral=True,
+        )
+
+    @changes_subgroup.command(name="test", description="Post a sample push embed to the configured channel")
+    async def config_changes_test(self, interaction: discord.Interaction) -> None:
+        if not await is_owner(interaction):
+            await interaction.response.send_message(embed=embeds.error_embed("Only the bot owner can use this."), ephemeral=True)
+            return
+        ch = await config.get_channel(self.bot, "channel_changes_announcements")
+        if ch is None:
+            await interaction.response.send_message(
+                embed=embeds.warning_embed(
+                    "No announcement channel set.",
+                    "Use `/config changes channel` with a channel first.",
+                ),
+                ephemeral=True,
+            )
+            return
+        sample = {
+            "ref": "refs/heads/main",
+            "commits": [
+                {"id": "deadbeef", "message": "feat: example commit subject line\n\nOptional body is hidden in the list."},
+                {"id": "c0ffee00", "message": "fix: another example commit"},
+            ],
+            "head_commit": {"id": "deadbeef", "message": "feat: example commit subject line"},
+            "pusher": {"name": interaction.user.display_name},
+            "repository": {"full_name": "your-org/your-repo"},
+            "compare": "https://github.com/your-org/your-repo/compare/example",
+        }
+        embed = build_github_push_embed(sample)
+        try:
+            await ch.send(embed=embed)
+        except discord.HTTPException as exc:
+            await interaction.response.send_message(
+                embed=embeds.error_embed(f"Could not post to {ch.mention}: {exc}"),
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            embed=embeds.success_embed(f"Sample push embed sent to {ch.mention}."),
+            ephemeral=True,
+        )
 
     @config_group.command(name="invite-code", description="Configure invite code gate for /register")
     @app_commands.describe(required="Require invite code before registration", code="Invite code value")

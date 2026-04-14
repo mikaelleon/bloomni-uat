@@ -35,6 +35,7 @@ class UATBot(commands.Bot):
         await self.load_extension("cogs.bugs")
         await self.load_extension("cogs.suggestions")
         await self.load_extension("cogs.earnings")
+        await self.load_extension("cogs.changelog_listener")
 
     async def on_ready(self) -> None:
         print(f"Logged in as {self.user} (id={self.user.id})")

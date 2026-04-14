@@ -1,4 +1,4 @@
-﻿# Setup and Configuration
+# Setup and Configuration
 
 ## Commands
 
@@ -39,6 +39,7 @@ These live under the **`/config`** group in the Registration cog:
 | `economy-mode` | `manual` or `auto`. |
 | `economy-auto` | Parameters: `weekly_cap`, `daily_bug_limit`, `daily_suggestion_limit`, plus optional weight/bonus percentages; computes all four rates and saves limits/cap. |
 | `rates` | Opens a **modal** to edit all seven numbers at once (then follows same broadcast behavior as manual rate updates when applicable). |
+| `changes` | Subcommands: `channel`, `enabled`, `status`, `test` — GitHub push announcements (see [FEATURE_Change_Announcements.md](./FEATURE_Change_Announcements.md)). |
 
 ## Logging
 

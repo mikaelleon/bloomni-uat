@@ -1,4 +1,4 @@
-﻿# Bloomni UAT Tracker Bot
+# Bloomni UAT Tracker Bot
 
 A Discord bot for small private teams running User Acceptance Testing (UAT): **screen registrations**, **track bugs and suggestions**, and **calculate weekly earnings** with clear owner validation steps.
 
@@ -29,6 +29,7 @@ This README is written so non-technical readers can understand what the bot does
 - **Broadcasts** rate changes to announcements and can **resend** the 7-page DM guide to all active testers when rates change (manual path / economy-auto / rates modal).
 - **Tester commands:** `/myinfo` (live reset countdowns), `/mybugs`, `/mysuggestions`, `/mypending`, `/streak`, `/history`, `/leaderboard`, plus `/earnings` and `/rates`.
 - **Tester removal:** deactivate or unregister can **remove** that tester’s bugs from the database, **close** threads, and **renumber** remaining bug IDs (`BUG-001`, `BUG-002`, …).
+- Optional **GitHub push announcements:** when `CHANGELOG_HTTP_ENABLED` is set and a GitHub webhook hits `/webhooks/github`, the bot can post an embed (commit subject lines + compare link) to a channel you set with **`/config changes`**.
 - Logs major actions to a private **bot log** channel when configured.
 - Uses a consistent embed color: **`#242429`**.
 
@@ -79,6 +80,14 @@ Optional (guild sync for faster command updates while developing):
 SYNC_GUILD_ID=your_guild_id
 ```
 
+Optional (repository push → Discord; see `docs/FEATURE_Change_Announcements.md`):
+
+```env
+CHANGELOG_HTTP_ENABLED=false
+CHANGELOG_HTTP_PORT=8765
+GITHUB_WEBHOOK_SECRET=your_github_webhook_secret
+```
+
 Generate `FERNET_KEY` with:
 
 ```bash
@@ -109,7 +118,7 @@ Complete the wizard, then configure:
 
 Detailed tables: **[docs/COMMANDS_By_Permission.md](docs/COMMANDS_By_Permission.md)**.
 
-**Owner (summary):** `/setup`, `/setup_reset`, `/config …`, `/bugs validate`, `/bugs reject`, `/bugs resolve`, `/bugs reopen`, `/suggestion acknowledge`, `/suggestion implement`, `/suggestion dismiss`, `/tester deactivate`, `/tester reactivate`, `/tester unregister`.
+**Owner (summary):** `/setup`, `/setup_reset`, `/config …` (including **`/config changes`** for Git push announcements), `/bugs validate`, `/bugs reject`, `/bugs resolve`, `/bugs reopen`, `/suggestion acknowledge`, `/suggestion implement`, `/suggestion dismiss`, `/tester deactivate`, `/tester reactivate`, `/tester unregister`.
 
 **Admin:** `/tester info @user`, `/tester list`, `/earnings @user`.
 
@@ -126,11 +135,12 @@ Detailed tables: **[docs/COMMANDS_By_Permission.md](docs/COMMANDS_By_Permission.
 | Bugs (validate/reject/resolve) | [docs/FEATURE_Bugs.md](docs/FEATURE_Bugs.md) |
 | Suggestions (acknowledge/implement) | [docs/FEATURE_Suggestions.md](docs/FEATURE_Suggestions.md) |
 | Earnings, `/myinfo`, leaderboard | [docs/FEATURE_Earnings_and_Rates.md](docs/FEATURE_Earnings_and_Rates.md) |
+| Git push → Discord embeds | [docs/FEATURE_Change_Announcements.md](docs/FEATURE_Change_Announcements.md) |
 
 ## Documentation Files
 
 - **[docs/COMMANDS_By_Permission.md](docs/COMMANDS_By_Permission.md)** — Slash commands by role.
-- **[docs/FEATURE_*.md](docs/)** — One file per area (setup, registration, bugs, suggestions, earnings).
+- **[docs/FEATURE_*.md](docs/)** — One file per area (setup, registration, bugs, suggestions, earnings, change announcements).
 - **[docs/UAT_Bot_Features.md](docs/UAT_Bot_Features.md)** — Original long-form design spec (partly aspirational; use README + FEATURE docs for current behavior).
 - **[docs/UAT_Bot_Implementation_Prompt.md](docs/UAT_Bot_Implementation_Prompt.md)** — Implementation prompt used to build the project.
 
