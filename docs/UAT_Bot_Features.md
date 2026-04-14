@@ -1,6 +1,10 @@
 # UAT Tracking Bot — Full Feature Specification
 ### Built with discord.py v2.x
 
+> **Document status (April 2026)**  
+> This file is a **design specification** and includes ideas that are **not all implemented** in the current codebase (for example: full `/payout` commands, scheduled weekly resets, `/patch`, milestone commands, some admin remap commands).  
+> For **what the running bot actually does today**, use the project **[README.md](../README.md)** and the **[FEATURE_*.md](./)** guides. Command names and economy rules have evolved (e.g. **validate / acknowledge** before paying report/submit rates; **`/config`** subcommands for rates and economy mode).
+
 > **Role Legend used in this document:**
 > - 🔴 **Owner Only** — Bot owner (hardcoded Discord User ID) or a designated "Bot Owner" role
 > - 🟡 **Admin** — Server admin or a designated "UAT Admin" role

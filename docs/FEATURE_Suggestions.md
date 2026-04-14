@@ -1,73 +1,69 @@
 ﻿# Suggestion System
 
-Covers `/suggest`, `/suggestion list`, `/suggestion info`, `/suggestion implement`, `/suggestion dismiss`.
+Covers `/suggest`, `/suggestion list`, `/suggestion info`, `/suggestion acknowledge`, `/suggestion implement`, `/suggestion dismiss`.
 
-## `/suggest` Submit Flow
+## Status values
 
-### Guard order
+| Status | Meaning |
+|--------|---------|
+| `submitted` | Awaiting owner acknowledgement (no submit pay yet). |
+| `acknowledged` | Acknowledged; submit rate paid. Can be implemented or dismissed. |
+| `implemented` | Implement bonus paid. |
+| `dismissed` | Closed without implementation. |
 
-1. User must be active tester.
-2. Daily suggestion limit must not be reached.
-3. Weekly cap must not be reached for suggestion submit rate.
+## `/suggest` submit flow
+
+### Guards
+
+1. Active tester.
+2. Daily suggestion limit.
+3. Weekly cap is enforced when **acknowledging** (owner action).
 
 ### Interaction flow
 
-1. Feature dropdown shown (from config list, includes `Other`).
-2. Suggestion modal opens with:
-   - title
-   - description
+1. Feature select (from config feature list + Other).
+2. Modal: title, description.
 3. On submit:
-   - next suggestion ID generated (`SUG-001`, etc.)
-   - row inserted with pending status
-   - embed posted in suggestions channel
-   - earnings updated
-   - daily counter incremented
-   - user DM confirmation sent
-   - bot log entry sent
+   - Next `SUG-xxx` ID, status **`submitted`**.
+   - Embed in suggestions channel.
+   - Daily counter incremented.
+   - **No** earnings on submit — DM embed states it is waiting for **acknowledgement**.
 
-## Owner Moderation
+## Owner moderation
 
-### `/suggestion implement`
+### `/suggestion acknowledge` (owner)
 
-- Owner only.
-- Suggestion must be pending.
-- Confirmation view shown.
-- On confirm:
-  - status -> implemented
-  - embed edited
-  - implement bonus credited
-  - payout log message sent
-  - submitter DM sent
-  - bot log entry sent
+- Only **`submitted`** → **`acknowledged`**.
+- Pays **suggestion submit rate**; increments `suggestions_acknowledged`.
+- Submitter DM: **embed** + **Current stats** (weekly balance, cap remaining, daily slots).
 
-### `/suggestion dismiss`
+### `/suggestion implement` (owner)
 
-- Owner only.
-- Suggestion must be pending.
-- Modal for optional reason.
-- On confirm:
-  - status -> dismissed
-  - reason stored
-  - embed edited
-  - submitter DM sent (keeps submission pay)
-  - bot log entry sent
+- Status must be **`submitted` or `acknowledged`** (implement bonus is separate from acknowledge pay; typical path is acknowledge then implement).
+- Confirmation view; on confirm: **`implemented`**, implement bonus paid, payout log, **embed** DM with stats.
 
-## Read Commands
+### `/suggestion dismiss` (owner)
+
+- **`submitted` or `acknowledged`** → **`dismissed`**.
+- Modal for optional reason; embed updated; submitter DM (plain text with reason in current code).
+
+## Read commands
 
 ### `/suggestion list`
 
-- Active tester required.
-- Filter: pending/implemented/dismissed/all.
-- Paginated, 5 rows per page.
+- Filters: `submitted`, `acknowledged`, `implemented`, `dismissed`, `all`.
+- Paginated.
 
 ### `/suggestion info`
 
-- Active tester required.
-- Sends full suggestion embed for selected ID.
+- Full suggestion embed for one ID.
 
-## Typical Output Text
+## Typical messages
 
-- "Pick a feature, then describe your suggestion."
-- "Suggestion {id} submitted! Check your DMs."
-- "Marked implemented."
-- "Dismissed."
+- “Pick a feature, then describe your suggestion.”
+- Submit DM: waiting for **acknowledgement** (not “+₱X added” on submit).
+- Implement/dismiss copy as in bot responses.
+
+## Feature list
+
+- Edited in **`/setup` Step 4 — Features** (modal: one feature per line). Stored in config as `feature_list`. The wizard keeps **`Other`** available for testers.

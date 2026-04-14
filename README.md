@@ -1,9 +1,8 @@
 ﻿# Bloomni UAT Tracker Bot
 
-A Discord bot that helps small private teams run User Acceptance Testing (UAT):
-register testers, collect bug reports and suggestions, and track weekly earnings.
+A Discord bot for small private teams running User Acceptance Testing (UAT): **screen registrations**, **track bugs and suggestions**, and **calculate weekly earnings** with clear owner validation steps.
 
-This guide is intentionally simple and non-technical.
+This README is written so non-technical readers can understand what the bot does and how to run it.
 
 ## Table of Contents
 
@@ -14,63 +13,70 @@ This guide is intentionally simple and non-technical.
 - [Setup Guide (Step-by-Step)](#setup-guide-step-by-step)
 - [Command Reference by Permission](#command-reference-by-permission)
 - [Feature Overview](#feature-overview)
+- [Documentation Files](#documentation-files)
 - [Logging and Safety](#logging-and-safety)
 - [Local Development](#local-development)
 - [Troubleshooting](#troubleshooting)
 
 ## What This Bot Does
 
-- Runs a guided first-time setup for required roles/channels/rates.
-- Registers testers securely (GCash encrypted at rest).
-- Accepts bug submissions with severity and evidence thread creation.
-- Accepts suggestions with feature tagging.
-- Lets owner resolve/reopen bugs and implement/dismiss suggestions.
-- Tracks weekly earnings and limits.
-- Shows personal and admin-view earnings and tester profiles.
-- Logs major actions to a private bot log channel.
+- Runs a guided **first-time setup** for roles, channels, rates, suggestion feature tags, and optional milestones.
+- **Application-based registration:** applicants complete two modals; the owner **approves or rejects** in a private applications channel; optional **invite code** gate.
+- Encrypts **GCash** numbers at rest (Fernet).
+- Accepts **bug** submissions (severity + modal); **owner validates** before report pay; **owner resolves** for resolve bonus (bug must be validated first).
+- Accepts **suggestions** (feature tag + modal); **owner acknowledges** before submit pay; **owner implements** for implement bonus.
+- Tracks **weekly earnings**, **daily limits**, and **weekly cap**; supports **manual** rates or **auto-calculated** economy from cap + daily limits.
+- **Broadcasts** rate changes to announcements and can **resend** the 7-page DM guide to all active testers when rates change (manual path / economy-auto / rates modal).
+- **Tester commands:** `/myinfo` (live reset countdowns), `/mybugs`, `/mysuggestions`, `/mypending`, `/streak`, `/history`, `/leaderboard`, plus `/earnings` and `/rates`.
+- **Tester removal:** deactivate or unregister can **remove** that tester’s bugs from the database, **close** threads, and **renumber** remaining bug IDs (`BUG-001`, `BUG-002`, …).
+- Logs major actions to a private **bot log** channel when configured.
+- Uses a consistent embed color: **`#242429`**.
 
 ## What This Bot Does Not Do Yet
 
-These are intentionally out of scope for the current release:
+These are **not** fully implemented as described in older design drafts:
 
-- Full payout command set (`/payout generate`, `/payout confirm`, `/payout gcash`, `/payout history`)
-- Leaderboard command
-- Automated weekly payout/reminder tasks
-- Milestone command suite (milestone data exists, but command set is not complete)
+- Full **payout** suite (`/payout generate`, `/payout confirm`, `/payout gcash`, `/payout history`) — earnings and “paid” flags exist, but not a complete payout workflow.
+- **Automated** weekly reminders, scheduled weekly resets, and **patch** announcement commands.
+- Complete **milestone** command suite (milestone data may exist from setup; reaching milestones via commands may be incomplete).
+
+**Implemented note:** `/leaderboard` **is** available (ranks testers by **total weekly earnings** for the current week).
 
 ## How It Works in Plain English
 
-1. Owner runs setup once.
-2. Members register in the register channel.
-3. Testers submit bugs and suggestions.
-4. Owner marks outcomes (resolved/implemented/dismissed).
-5. Bot updates each tester's weekly earnings and limits.
-6. Everyone can see what they submitted and what they earned.
+1. Owner runs **`/setup`** once.
+2. Owner sets **`/config applications-channel`** to a private channel (recommended) and optionally **`/config invite-code`**.
+3. Members run **`/register`** in the register channel; after approval they get the **Tester** role and a **paginated DM guide**.
+4. Testers file **bugs** and **suggestions**; **no** report/submit pay until the **owner validates / acknowledges**.
+5. Owner **resolves** bugs and **implements** suggestions for bonuses; earnings stay under the **weekly cap**.
+6. Testers use **`/myinfo`**, **`/earnings`**, and related commands to track progress.
 
 ## Permissions and Roles
 
-The bot uses three main roles:
+- **`UAT Admin`:** extra visibility (e.g. `/tester list`, viewing others’ earnings).
+- **`Tester`:** required for normal tester commands after approval.
+- **`Senior Tester`:** tracked toward **4+ active weeks** (loyalty / display); automatic loyalty payouts may depend on future scheduling features.
 
-- `UAT Admin`: can view/manage more than regular testers.
-- `Tester`: required for normal tester commands.
-- `Senior Tester`: reserved for future bonus logic.
+**Permission levels in slash commands:**
 
-Permission levels used in commands:
-
-- Owner Only
-- Admin (and owner)
-- Active Tester
+- **Bot owner** (env `OWNER_ID`) — setup, config, bug/suggestion moderation, tester deactivate/unregister.
+- **Admin** — `/tester info @user`, `/tester list`, `/earnings @user` (as implemented in `utils/checks`).
+- **Active tester** — submission and personal stats commands.
 
 ## Setup Guide (Step-by-Step)
 
 ### 1) Create `.env` in `uat-bot/`
 
-Use this format:
-
 ```env
 BOT_TOKEN=your_discord_bot_token
 OWNER_ID=your_discord_user_id
 FERNET_KEY=your_generated_fernet_key
+```
+
+Optional (guild sync for faster command updates while developing):
+
+```env
+SYNC_GUILD_ID=your_guild_id
 ```
 
 Generate `FERNET_KEY` with:
@@ -82,7 +88,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 ### 2) Install dependencies
 
 ```bash
-cd "uat-bot"
+cd uat-bot
 pip install -r requirements.txt
 ```
 
@@ -94,109 +100,59 @@ python bot.py
 
 ### 4) In Discord, run `/setup`
 
-Use the wizard to:
+Complete the wizard, then configure:
 
-- create/map roles
-- create/map channels
-- set rates and limits
-- edit feature dropdown options
-- add optional milestones
-- confirm setup
-
-When done, the bot posts/pins guidelines in the guidelines channel.
+- `/config applications-channel` → private **#applications** (or similar)
+- `/config invite-code` if you want a referral/invite gate
 
 ## Command Reference by Permission
 
-### Owner Only
+Detailed tables: **[docs/COMMANDS_By_Permission.md](docs/COMMANDS_By_Permission.md)**.
 
-- `/setup`
-- `/setup_reset`
-- `/tester deactivate`
-- `/tester reactivate`
-- `/bugs resolve`
-- `/bugs reopen`
-- `/suggestion implement`
-- `/suggestion dismiss`
+**Owner (summary):** `/setup`, `/setup_reset`, `/config …`, `/bugs validate`, `/bugs reject`, `/bugs resolve`, `/bugs reopen`, `/suggestion acknowledge`, `/suggestion implement`, `/suggestion dismiss`, `/tester deactivate`, `/tester reactivate`, `/tester unregister`.
 
-### Admin (Owner also allowed)
+**Admin:** `/tester info @user`, `/tester list`, `/earnings @user`.
 
-- `/tester info @user`
-- `/tester list`
-- `/earnings @user`
+**Active tester:** `/update-gcash`, `/tester info`, `/bug`, `/bugs submit`, `/bugs list`, `/bugs info`, `/suggest`, `/suggestion list`, `/suggestion info`, `/earnings`, `/rates`, `/myinfo`, `/mybugs`, `/mysuggestions`, `/mypending`, `/streak`, `/history`, `/leaderboard`.
 
-### Active Tester
-
-- `/update-gcash`
-- `/tester info`
-- `/bug` (submit)
-- `/bugs submit`
-- `/bugs list`
-- `/bugs info`
-- `/suggest`
-- `/suggestion list`
-- `/suggestion info`
-- `/earnings`
-- `/rates`
-
-### Registration / Unregistered Entry
-
-- `/register` (must be in configured register channel)
+**Register channel:** `/register [invite_code]`.
 
 ## Feature Overview
 
-### Setup Wizard
+| Topic | Doc |
+|--------|-----|
+| Setup wizard & `/config` | [docs/FEATURE_Setup_and_Configuration.md](docs/FEATURE_Setup_and_Configuration.md) |
+| Registration, applications, testers | [docs/FEATURE_Registration_and_Testers.md](docs/FEATURE_Registration_and_Testers.md) |
+| Bugs (validate/reject/resolve) | [docs/FEATURE_Bugs.md](docs/FEATURE_Bugs.md) |
+| Suggestions (acknowledge/implement) | [docs/FEATURE_Suggestions.md](docs/FEATURE_Suggestions.md) |
+| Earnings, `/myinfo`, leaderboard | [docs/FEATURE_Earnings_and_Rates.md](docs/FEATURE_Earnings_and_Rates.md) |
 
-- Interactive role/channel/rate/feature/milestone setup
-- Summary before confirmation
-- Setup completion flag in DB
+## Documentation Files
 
-### Registration
-
-- TOS acceptance/decline flow
-- GCash validation (`09XXXXXXXXX`)
-- encrypted GCash storage
-- tester role assignment
-
-### Bugs
-
-- severity selector before modal
-- duplicate title warning (Jaccard similarity)
-- channel post + evidence thread creation
-- resolve/reopen lifecycle
-
-### Suggestions
-
-- feature dropdown from config list
-- pending/implemented/dismissed lifecycle
-- owner moderation flow
-
-### Earnings
-
-- weekly counters and totals
-- daily bug/suggestion caps
-- weekly earnings cap
+- **[docs/COMMANDS_By_Permission.md](docs/COMMANDS_By_Permission.md)** — Slash commands by role.
+- **[docs/FEATURE_*.md](docs/)** — One file per area (setup, registration, bugs, suggestions, earnings).
+- **[docs/UAT_Bot_Features.md](docs/UAT_Bot_Features.md)** — Original long-form design spec (partly aspirational; use README + FEATURE docs for current behavior).
+- **[docs/UAT_Bot_Implementation_Prompt.md](docs/UAT_Bot_Implementation_Prompt.md)** — Implementation prompt used to build the project.
 
 ## Logging and Safety
 
-- Key actions are logged to `channel_bot_logs`.
-- GCash is encrypted using Fernet before saving.
-- `.env` must never be committed.
-- Embeds use a consistent theme color: `#242429`.
+- Important actions can be logged to **`channel_bot_logs`** (warnings/suggestions phrasing in code where applicable).
+- **Never commit** `.env` or real tokens. If a token was committed, **rotate** it in the Discord Developer Portal.
+- GCash is stored **encrypted**; profile commands do **not** show full GCash numbers.
 
 ## Local Development
 
-Project root here contains docs and `uat-bot/` source code.
-
 - Entry: `uat-bot/bot.py`
-- Database: `uat-bot/database/`
-- Commands: `uat-bot/cogs/`
-- UI helpers: `uat-bot/ui/`
+- Database: SQLite (`uat_bot.db` by default), schema under `uat-bot/database/`
+- Cogs: `uat-bot/cogs/`
+- UI: `uat-bot/ui/`
 - Utilities: `uat-bot/utils/`
 
 ## Troubleshooting
 
-- "Bot has not been set up": run `/setup` as owner.
-- "Please head to #register-here": use `/register` in configured register channel.
-- Can't use tester commands: verify tester is active and has Tester role.
-- Missing channel/role behavior: rerun `/setup_reset` then `/setup`.
-- Push blocked by secret scanning: rotate token and ensure `.env` is ignored.
+- **“Bot has not been set up”** — Owner runs `/setup`.
+- **“Please head to #register-here”** — Use `/register` only in the configured register channel.
+- **Tester commands fail** — Ensure the member has the **Tester** role and `is_active` in the database.
+- **FERNET_KEY errors on approval** — Set `FERNET_KEY` in `.env` and restart; without it, approvals that need encryption will fail.
+- **Commands missing in Discord** — Set `SYNC_GUILD_ID` for instant guild sync, or wait for global command propagation.
+- **Interaction / “Unknown interaction” errors** — Usually fixed in current code by deferring early; update to latest `uat-bot` and restart.

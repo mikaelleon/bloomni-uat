@@ -265,7 +265,7 @@ class Earnings(commands.Cog):
         lines = [f"Week {r['week_start']}: ₱{r['total_earned']} ({'paid' if int(r.get('is_paid') or 0) else 'pending'})" for r in rows[:10]]
         await interaction.response.send_message(embed=discord.Embed(title="Earnings History", description="\n".join(lines), color=embeds.EMBED_COLOR), ephemeral=True)
 
-    @app_commands.command(name="leaderboard", description="Top testers this week by validated earnings")
+    @app_commands.command(name="leaderboard", description="Top testers this week by total weekly earnings")
     async def leaderboard(self, interaction: discord.Interaction) -> None:
         ws = get_week_start(today_pht())
         rows = await db.get_weekly_leaderboard(ws, limit=10)

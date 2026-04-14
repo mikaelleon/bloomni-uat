@@ -1,85 +1,88 @@
 ﻿# Bug Reporting and Resolution
 
-Covers `/bug`, `/bugs submit`, `/bugs list`, `/bugs info`, `/bugs resolve`, `/bugs reopen`.
+Covers `/bug`, `/bugs submit`, `/bugs list`, `/bugs info`, `/bugs validate`, `/bugs reject`, `/bugs resolve`, `/bugs reopen`.
 
-## Submission Commands
+## Submission commands
 
 - `/bug`
 - `/bugs submit`
 
-Both trigger the same submit workflow.
+Both start the same workflow.
 
-## Submit Workflow Logic
+## Status values
 
-### Guard order
+| Status | Meaning |
+|--------|---------|
+| `submitted` | Awaiting owner validation (no report pay yet). |
+| `validated` | Validated; report rate paid. Can be resolved or rejected. |
+| `rejected` | Not accepted (no pay for validate path). |
+| `resolved` | Fix confirmed; resolve bonus paid (from `validated` only). |
+| `duplicate` | Linked to another bug via `duplicate_of`. |
 
-1. User must be an active tester.
-2. Daily bug limit must not be reached.
-3. Weekly cap must not be reached for current bug rate.
+`/bugs list` filter **`open`** means **submitted or validated** (unresolved work in progress).
+
+## Submit workflow
+
+### Guards
+
+1. Active tester.
+2. Daily bug limit (from config).
+3. Weekly cap check applies when validating (not at submit in the same way—owner validates and pay runs then).
 
 ### Interaction flow
 
-1. Severity select shown (High/Medium/Low).
-2. Bug modal opens with:
-   - title
-   - steps to reproduce
-   - actual result
-   - expected result
-3. Duplicate check compares title with open bugs using Jaccard similarity.
-4. If likely duplicate, bot asks user to continue or cancel.
-5. On submit:
-   - next bug ID generated (`BUG-001`, etc.)
-   - row saved in DB
-   - embed posted in bug reports channel
-   - public thread created for evidence
-   - earnings and daily count updated
-   - user DM confirmation sent
-   - bot log entry sent
+1. Severity select (High / Medium / Low).
+2. Bug modal: title, steps, actual, expected.
+3. Duplicate check on title (Jaccard ≥ 0.7 vs “open” titles); user can confirm or cancel.
+4. On submit:
+   - Next `BUG-xxx` ID.
+   - Row saved with status **`submitted`**.
+   - Embed in bug reports channel; evidence thread created.
+   - Daily `bugs_today` incremented.
+   - **No** earnings on submit — DM says it is waiting for **validation**.
 
-## Owner Actions
+## Owner actions
 
-### `/bugs resolve`
+### `/bugs validate` (owner)
 
-- Owner only.
-- Validates bug exists and is open.
-- Confirmation buttons (confirm/cancel).
-- On confirm:
-  - status -> resolved
-  - bug embed edited
-  - thread archived
-  - resolve bonus added
-  - payout log posted
-  - reporter DM sent
-  - bot log entry sent
+- Defers immediately (avoids unknown interaction / timeout).
+- Only **`submitted`** → **`validated`**.
+- Pays **bug report rate**; increments `bugs_validated`; updates embed.
+- Reporter DM: **embed** with title/description plus **Current stats** (weekly balance vs cap, weekly cap remaining, daily bug/suggestion slots left).
 
-### `/bugs reopen`
+### `/bugs reject` (owner)
 
-- Owner only.
-- Validates bug is resolved.
-- Modal for optional reason.
-- On confirm:
-  - status -> open
-  - bug embed edited
-  - thread unarchived
-  - resolve bonus reversed
-  - reporter DM sent
-  - bot log entry sent
+- **`submitted` or `validated`** → **`rejected`**.
+- Embed updated; reporter DM (plain message with reason in current code).
 
-## Read Commands
+### `/bugs resolve` (owner)
+
+- Bug must be **`validated`** (not merely submitted).
+- Confirm/cancel view.
+- On confirm: **`resolved`**, thread archived, **resolve bonus** paid, `bugs_resolved` incremented, payout log line, reporter **embed** DM with same stats block as validate.
+
+### `/bugs reopen` (owner)
+
+- From **`resolved`** only.
+- Modal optional reason.
+- Status → **`validated`** (not back to submitted); resolve bonus reversed in earnings; thread unarchived; reporter notified.
+
+## Read commands
 
 ### `/bugs list`
 
-- Active tester required.
-- Status filter: open/resolved/duplicate/all
-- Paginated response, 5 per page.
+- Active tester; status filter includes `open`, `submitted`, `validated`, `rejected`, `resolved`, `duplicate`, `all`.
+- Paginated (5 per page).
+- Timestamps shown as simple local-style strings, e.g. **`14 Apr 2026 03:45 PM`** (`_simple_dt`).
 
 ### `/bugs info`
 
-- Active tester required.
-- Shows full bug embed and thread link when available.
+- Full `bug_report_embed`; thread link appended when available.
 
-## Output Text Examples
+## Tester removal and IDs
 
-- "Choose severity, then fill out the bug form."
-- "You've hit today's bug limit (3/day). Come back tomorrow!"
-- "Bug {bug_id} submitted! Check your DMs for the thread link."
+When a tester is **deactivated** or **unregistered**, their bug rows are removed and remaining bug IDs are **compacted** globally (`BUG-001` … in submission order). Threads are archived and channel messages removed when the bot can access them.
+
+## Logging
+
+- Events such as `BUG_SUBMIT`, `BUG_RESOLVE`, `BUG_REOPEN`, validate/reject flows are logged via `log_event` when the bot log channel is configured.

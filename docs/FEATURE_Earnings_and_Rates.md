@@ -1,45 +1,60 @@
 ﻿# Earnings and Rates
 
-Covers `/earnings` and `/rates`.
+Covers `/earnings`, `/rates`, `/myinfo`, `/mybugs`, `/mysuggestions`, `/mypending`, `/streak`, `/history`, `/leaderboard`, and how owner config ties in.
 
 ## `/earnings`
 
 ### Access
 
-- No argument: active tester can view own earnings.
-- With user argument: admin required.
+- No argument: active tester sees **own** weekly row.
+- `@user`: **admin** (or owner) only.
 
 ### Logic
 
-1. Determine target user.
-2. Ensure tester exists.
-3. Resolve current week start (Monday in Asia/Manila timezone).
-4. Load/create weekly earnings row.
-5. Compute per-category earnings using configured rates.
-6. Render detailed earnings embed:
-   - bugs submitted and earnings
-   - bugs resolved and bonus
-   - suggestions submitted and earnings
-   - suggestions implemented and bonus
-   - weekly total
-   - cap remaining
-   - payout status
+- Week boundary: Monday start in **Asia/Manila** (`get_week_start`).
+- Loads/creates the `earnings` row for that week.
+- **Displayed math** uses:
+  - `bugs_validated` × bug report rate  
+  - `bugs_resolved` × resolve bonus  
+  - `suggestions_acknowledged` × suggestion submit rate  
+  - `suggestions_implemented` × implement bonus  
+- `bugs_submitted` / `suggestions_submitted` counters may still exist for stats but **paid amounts** follow validated/acknowledged/resolved/implemented columns.
+- Shows total earned vs weekly cap and paid flag.
 
 ## `/rates`
 
-- Shows active config values for:
-  - earning rates
-  - daily limits
-  - weekly cap
-  - payout day
+- Ephemeral embed from full config: all four rates, daily limits, weekly cap, payout day, **economy mode** (`manual` / `auto`), etc.
 
-## Data Sources
+## `/myinfo`
 
-- `earnings` table for counters and totals
-- `config` table for rates/limits
+- Active tester only.
+- Pulls **live** `daily_bug_limit`, `daily_suggestion_limit`, `weekly_cap` from config.
+- **Daily reset** and **weekly reset** use Discord relative timestamps: `<t:UNIX:R>`.
+- Shows today’s usage, week-to-date earnings, **pending** counts (bugs in `submitted`, suggestions in `submitted`) with “pending validation / acknowledgement” peso hints using current rates.
+- All-time stats block from `get_tester_all_time_stats`.
 
-## Output Examples
+## Other tester commands (same cog)
 
-- "Weekly earnings — {display_name}"
-- "Cap remaining: ₱X / ₱Y"
-- "Payout status: Pending/Paid"
+| Command | Role | Notes |
+|---------|------|--------|
+| `/mybugs` | Active tester | Paginated list of your bugs; optional `status` filter. |
+| `/mysuggestions` | Active tester | Paginated list of your suggestions; optional `status` filter. |
+| `/mypending` | Active tester | Counts of `submitted` bugs and `submitted` suggestions. |
+| `/streak` | Active tester | Consecutive active weeks and senior (4+ weeks) progress. |
+| `/history` | Active tester | Past weekly rows; optional `week` index. |
+| `/leaderboard` | Anyone who can invoke | Top **10** users by **`total_earned`** for the **current** week (not “validated-only” ranking). |
+
+## Owner-driven rate changes
+
+- **`/config set`** with a numeric key: if economy mode is **manual** and a rate/limit changed, the bot can **announce** in the announcements channel and **resend** the 7-page DM guide to all active testers (`_broadcast_rate_update`).
+- **`/config economy-auto`**: sets mode to **auto**, writes computed rates + limits, then broadcasts the same way.
+- In **auto** mode, **`/config set`** is blocked for numeric rate keys until you switch to manual or run `economy-auto` again.
+
+## Data sources
+
+- `earnings` table: weekly counters and `total_earned`, `is_paid`.
+- `config` table: rates, limits, `economy_mode`, `bot_description`, `tos_text`, channels, etc.
+
+## DM quality for money events
+
+- Bug validate, bug resolve, suggestion acknowledge, suggestion implement send **rich embeds** to the user with a **Current stats** field (weekly balance, cap remaining, daily bug/suggestion slots left).

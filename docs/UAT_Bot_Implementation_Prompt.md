@@ -7,6 +7,8 @@
 
 Paste the full contents of this file as your first message to your AI coding assistant. It contains everything needed to scaffold and implement the core features of the UAT Tracking Bot. Follow the phases in order — do not skip ahead. Each phase builds on the previous one.
 
+**After implementation:** the authoritative description of **current** commands and behavior is **[README.md](../README.md)** and **[docs/FEATURE_*.md](./)**. The prompt and `UAT_Bot_Features.md` may lag or differ on details (economy flow, `/config`, application registration, etc.).
+
 ---
 
 ---
