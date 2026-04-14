@@ -29,12 +29,12 @@ Write-Host "  python bot.py"
 Write-Host "  Expect log line: Webhook server listening ... :$port/webhooks/github"
 Write-Host ""
 
-Write-Host "=== 2) Local URL (health check: browser may show 405 - OK) ===" -ForegroundColor Cyan
+Write-Host "=== 2) Local URL (health check: browser may show 405 — OK) ===" -ForegroundColor Cyan
 Write-Host "  http://127.0.0.1:$port/webhooks/github"
 Write-Host ""
 
-Write-Host "=== 3) Tunnel (terminal B) - keep open while GitHub delivers ===" -ForegroundColor Cyan
-Write-Host ('  "C:\path\to\cloudflared-windows-amd64.exe" tunnel --url http://127.0.0.1:' + $port)
+Write-Host "=== 3) Tunnel (terminal B) — keep open while GitHub delivers ===" -ForegroundColor Cyan
+Write-Host '  "C:\path\to\cloudflared-windows-amd64.exe" tunnel --url http://127.0.0.1:'"$port"
 Write-Host "  Copy https://....trycloudflare.com from the box."
 Write-Host ""
 
@@ -49,6 +49,6 @@ Write-Host "  /config changes channel  +  /config changes enabled true"
 Write-Host ""
 
 if (-not $httpEnabled) {
-    Write-Host "NOTE: CHANGELOG_HTTP_ENABLED not true in .env - listener may not start." -ForegroundColor Yellow
+    Write-Host "NOTE: CHANGELOG_HTTP_ENABLED not true in .env — listener may not start." -ForegroundColor Yellow
 }
 Write-Host ""

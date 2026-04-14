@@ -14,10 +14,6 @@ Quick lookup aligned with the current slash commands in `uat-bot/cogs/`.
 | `/config economy-mode` | `manual` or `auto` (auto uses calculated rates from limits/cap). |
 | `/config economy-auto` | Compute all four rates plus cap/limits from weekly cap and daily limits. |
 | `/config rates` | Open a modal to set all seven rate/limit values at once. |
-| `/config changes channel` | Channel for GitHub push announcements (omit `channel` to clear). |
-| `/config changes enabled` | Turn push announcements on/off. |
-| `/config changes status` | Show webhook URL hints, port, and env status. |
-| `/config changes test` | Post a sample push embed to the configured channel. |
 | `/bugs validate` | Credit bug report rate; status `submitted` → `validated`. |
 | `/bugs reject` | Reject a bug (`submitted` or `validated`); optional reason DM. |
 | `/bugs resolve` | Resolve a **validated** bug (resolve bonus). |
@@ -67,7 +63,6 @@ Quick lookup aligned with the current slash commands in `uat-bot/cogs/`.
 
 ## Notes
 
-- **Push announcements:** Requires `CHANGELOG_HTTP_ENABLED=true` in `.env`, a public URL to `POST /webhooks/github`, and GitHub webhook secret matching `GITHUB_WEBHOOK_SECRET`. See `docs/FEATURE_Change_Announcements.md`.
 - **Economy:** In `auto` mode, `/config set` cannot change numeric rates; use `/config economy-auto` or switch to `manual`.
 - **Pay flow:** Bug report and suggestion submit rates pay on **validate** and **acknowledge**, not on raw submission.
 - **Embeds:** Bot theme color is `#242429` for standard embeds.
